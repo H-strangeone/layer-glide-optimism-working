@@ -1,0 +1,77 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\sanje\\Downloads\\layer-glide-optimism\\contracts\\Layer2Scaling.sol": {
+      "lastModificationDate": 1743795388729,
+      "contentHash": "c983097c487bf0636b48740edc750f5b",
+      "sourceName": "contracts/Layer2Scaling.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "Layer2Scaling"
+      ]
+    },
+    "C:\\Users\\sanje\\Downloads\\layer-glide-optimism-curnew\\layer-glide-optimism-curnew\\contracts\\Layer2Scaling.sol": {
+      "lastModificationDate": 1744111018521,
+      "contentHash": "c983097c487bf0636b48740edc750f5b",
+      "sourceName": "contracts/Layer2Scaling.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "Layer2Scaling"
+      ]
+    }
+  }
+}
