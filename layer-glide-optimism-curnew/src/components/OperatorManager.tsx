@@ -96,14 +96,25 @@ export default function OperatorManager() {
 
         setIsLoading(true);
         try {
-            await addOperator(operatorAddress);
+            const response = await fetch('http://localhost:5500/api/admin/operators', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ address: operatorAddress }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to add operator');
+            }
+
             toast({
                 title: "Success",
                 description: "Operator added successfully",
             });
             setOperatorAddress("");
             fetchOperators();
-        } catch (error: any) {
+        } catch (error) {
             console.error("Error adding operator:", error);
             toast({
                 title: "Error",
@@ -225,4 +236,4 @@ export default function OperatorManager() {
             </CardContent>
         </Card>
     );
-} 
+}

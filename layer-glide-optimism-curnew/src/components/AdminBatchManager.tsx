@@ -218,22 +218,25 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
                 throw new Error('Failed to get contract instance');
             }
 
-            // Find the selected batch
             const selectedBatch = batches.find(b => b.id === batchId);
             if (!selectedBatch) {
                 throw new Error('Selected batch not found');
             }
 
-            // Use the batchId from the selected batch
-            const numericBatchId = BigInt(selectedBatch.batchId);
+            // Convert batchId to BigInt by parsing it as a hexadecimal string
+            const numericBatchId = BigInt(`0x${selectedBatch.batchId.replace(/-/g, "")}`);
 
             console.log(`Verifying batch with ID: ${numericBatchId}`);
 
-            // Verify the batch on the contract using the numeric ID
+            // Check if the batch exists on the blockchain
+            const batchData = await contract.batches(numericBatchId);
+            if (batchData.batchId === 0n) {
+                throw new Error('Batch does not exist on the blockchain');
+            }
+
             const tx = await contract.verifyBatch(numericBatchId);
             await tx.wait();
 
-            // Update the database using the UUID
             const response = await fetch('http://localhost:5500/api/batches/verify', {
                 method: 'POST',
                 headers: {
@@ -253,7 +256,6 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
                 description: "Batch verified successfully",
             });
 
-            // Refresh batches
             await fetchBatches();
         } catch (error) {
             console.error('Error verifying batch:', error);
@@ -473,6 +475,55 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
             toast({
                 title: "Error",
                 description: error instanceof Error ? error.message : "Failed to verify challenge",
+                variant: "destructive",
+            });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleReportBatch = async (batchId: string, reason: string) => {
+        if (!address) {
+            toast({
+                title: "Error",
+                description: "Please connect your wallet first",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        if (!reason) {
+            toast({
+                title: "Error",
+                description: "Reason for reporting is required",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const response = await fetch('http://localhost:5500/api/batches/report', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ batchId, reason }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to report batch');
+            }
+
+            toast({
+                title: "Success",
+                description: "Batch reported successfully",
+            });
+        } catch (error) {
+            console.error('Error reporting batch:', error);
+            toast({
+                title: "Error",
+                description: "Failed to report batch",
                 variant: "destructive",
             });
         } finally {
@@ -716,6 +767,18 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
                                                 Challenge
                                             </Button>
                                         )}
+                                        <Button
+                                            onClick={() => {
+                                                const reason = prompt('Enter the reason for reporting this batch:');
+                                                if (reason) {
+                                                    handleReportBatch(batch.id, reason);
+                                                }
+                                            }}
+                                            disabled={isLoading}
+                                            className="bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20"
+                                        >
+                                            Report
+                                        </Button>
                                     </div>
                                 </div>
                             </div>
@@ -822,4 +885,4 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
             </div>
         );
     }
-} 
+}

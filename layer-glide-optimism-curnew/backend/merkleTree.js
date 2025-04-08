@@ -98,4 +98,42 @@ class MerkleTree {
   }
 }
 
+/**
+ * Generates fraud proof data for a specific transaction in a batch
+ * @param {Array<Object>} transactions - Array of transactions in the batch
+ * @param {number} transactionIndex - Index of the invalid transaction
+ * @returns {Object} Fraud proof data including the Merkle proof and transaction details
+ */
+export function generateFraudProof(transactions, transactionIndex) {
+  if (transactionIndex < 0 || transactionIndex >= transactions.length) {
+    throw new Error('Invalid transaction index');
+  }
+
+  // Hash each transaction to create leaves for the Merkle tree
+  const leaves = transactions.map(tx =>
+    ethers.utils.keccak256(
+      ethers.utils.defaultAbiCoder.encode(
+        ['address', 'address', 'uint256'],
+        [tx.from, tx.to, tx.value]
+      )
+    )
+  );
+
+  // Create the Merkle tree
+  const merkleTree = new MerkleTree(leaves);
+
+  // Get the Merkle proof for the invalid transaction
+  const proof = merkleTree.getProof(transactionIndex);
+
+  // Get the Merkle root
+  const root = merkleTree.getRoot();
+
+  // Return the fraud proof data
+  return {
+    transaction: transactions[transactionIndex],
+    proof,
+    root,
+  };
+}
+
 export default MerkleTree;

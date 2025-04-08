@@ -79,18 +79,18 @@ const initBlockchainConnection = async () => {
   try {
     if (NETWORK === 'sepolia') {
       console.log('Initializing blockchain connection with Alchemy API (Sepolia)');
-    if (!ALCHEMY_API_KEY) {
+      if (!ALCHEMY_API_KEY) {
         console.error('ALCHEMY_API_KEY not found in .env file.');
-      return false;
-    }
-    
-    provider = new ethers.providers.AlchemyProvider("sepolia", ALCHEMY_API_KEY);
+        return false;
+      }
+
+      provider = new ethers.providers.AlchemyProvider("sepolia", ALCHEMY_API_KEY);
       const privateKey = process.env.PRIVATE_KEY;
       if (!privateKey) {
         console.error('PRIVATE_KEY not found in .env file.');
         return false;
       }
-    
+
       const wallet = new ethers.Wallet(privateKey, provider);
       contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, wallet);
 
@@ -299,7 +299,7 @@ app.post('/api/batches', async (req, res) => {
         const tx = await contract.submitBatch([transactionsRoot]);
         const receipt = await tx.wait();
         console.log(`Batch submitted to blockchain. Transaction hash: ${receipt.transactionHash}`);
-  } catch (error) {
+      } catch (error) {
         console.error('Error submitting batch to blockchain:', error);
       }
     }
@@ -510,14 +510,14 @@ app.get('/api/batches/:id', async (req, res) => {
       const mockBatch = getMockBatches().find(b => b.id === req.params.id);
       return res.json(mockBatch || { error: "Batch not found" });
     }
-    
+
     const batchId = req.params.id;
     const batch = await contract.batches(batchId);
-    
+
     if (Number(batch.batchId) === 0) {
       return res.status(404).json({ error: "Batch not found" });
     }
-    
+
     const batchData = {
       id: batch.batchId.toString(),
       transactionsRoot: batch.transactionsRoot,
@@ -526,7 +526,7 @@ app.get('/api/batches/:id', async (req, res) => {
       finalized: batch.finalized,
       transactions: [], // We don't have transactions details from the contract
     };
-    
+
     res.json(batchData);
   } catch (error) {
     console.error(`Error fetching batch ${req.params.id}:`, error);
@@ -555,8 +555,8 @@ app.post('/api/transactions', async (req, res) => {
         data: {
           batchId: batchId,
           transactionsRoot: '0x0000000000000000000000000000000000000000000000000000000000000000', // Temporary
-      verified: false,
-      finalized: false,
+          verified: false,
+          finalized: false,
           rejected: false,
           createdAt: new Date(),
           updatedAt: new Date()
@@ -608,7 +608,7 @@ app.post('/api/transactions', async (req, res) => {
 
     const { batch, transactions: savedTransactions, transactionsRoot } = result;
     console.log('Created batch:', JSON.stringify(batch, null, 2));
-    
+
     // Submit batch to the contract if connected
     if (isConnected && contract) {
       try {
@@ -641,20 +641,20 @@ app.post('/api/transactions', async (req, res) => {
 // Get transactions by address
 app.get('/api/transactions', async (req, res) => {
   const { address } = req.query;
-  
+
   if (!address) {
     return res.status(400).json({ error: "Address is required" });
   }
-  
+
   try {
     // Filter local transactions by address
     const addressTransactions = transactions.filter(
-      tx => tx.sender.toLowerCase() === address.toLowerCase() || 
-            tx.recipient.toLowerCase() === address.toLowerCase()
+      tx => tx.sender.toLowerCase() === address.toLowerCase() ||
+        tx.recipient.toLowerCase() === address.toLowerCase()
     );
-    
+
     // If connected to blockchain, we could fetch additional transaction data here
-    
+
     if (addressTransactions.length > 0) {
       return res.json(addressTransactions);
     } else {
@@ -670,25 +670,25 @@ app.get('/api/transactions', async (req, res) => {
 // Get fraud proof for a transaction
 app.get('/api/proof/:batchId/:transactionIndex', (req, res) => {
   const { batchId, transactionIndex } = req.params;
-  
+
   const batch = batches.find(b => b.id === batchId);
-  
+
   if (!batch) {
     return res.status(404).json({ error: "Batch not found" });
   }
-  
+
   const index = parseInt(transactionIndex);
-  
+
   if (isNaN(index) || index < 0 || index >= batch.transactions.length) {
     return res.status(400).json({ error: "Invalid transaction index" });
   }
-  
+
   // Get the Merkle proof for the transaction
   const merkleProof = batch.merkleTree.getProof(index);
-  
+
   // In a real implementation, the fraud proof would be computed based on an invalid state transition
   const fraudProof = ethers.utils.id("fraud proof");
-  
+
   res.json({
     fraudProof,
     merkleProof,
@@ -706,10 +706,10 @@ app.get('/api/gas-prices', async (req, res) => {
         rapid: "35",
       });
     }
-    
+
     const feeData = await provider.getFeeData();
     const gasPriceGwei = Math.round(Number(ethers.utils.formatUnits(feeData.gasPrice, "gwei")));
-    
+
     res.json({
       slow: (gasPriceGwei * 0.8).toFixed(0),
       standard: gasPriceGwei.toFixed(0),
@@ -730,7 +730,7 @@ app.get('/api/gas-prices', async (req, res) => {
 // Get balance for an address
 app.get('/api/balance/:address', async (req, res) => {
   const { address } = req.params;
-  
+
   if (!address) {
     return res.status(400).json({ error: "Address is required" });
   }
@@ -743,11 +743,11 @@ app.get('/api/balance/:address', async (req, res) => {
     if (isConnected && provider && contract) {
       try {
         // Get Ethereum balance
-    const ethBalance = await provider.getBalance(address);
+        const ethBalance = await provider.getBalance(address);
         layer1Balance = ethers.utils.formatEther(ethBalance);
 
         // Get Layer 2 balance from contract
-    const l2Balance = await contract.balances(address);
+        const l2Balance = await contract.balances(address);
         layer2Balance = ethers.utils.formatEther(l2Balance);
 
         console.log(`Fetched balances for ${address}: L1=${layer1Balance}, L2=${layer2Balance}`);
@@ -1610,6 +1610,73 @@ app.post('/api/admin/contracts', async (req, res) => {
   } catch (error) {
     console.error('Error adding contract:', error);
     res.status(500).json({ error: 'Failed to add contract' });
+  }
+});
+
+// Report a batch
+app.post('/api/batches/report', async (req, res) => {
+  try {
+    const { batchId, reason } = req.body;
+    if (!batchId || !reason) {
+      return res.status(400).json({ error: 'Batch ID and reason are required' });
+    }
+
+    // Create a report record in the database
+    const report = await prisma.batchReport.create({
+      data: {
+        batchId,
+        reason,
+        createdAt: new Date()
+      }
+    });
+
+    res.json({
+      message: 'Batch reported successfully',
+      report
+    });
+  } catch (error) {
+    console.error('Error reporting batch:', error);
+    res.status(500).json({ error: 'Failed to report batch' });
+  }
+});
+
+// Submit fraud proof
+app.post('/api/batches/fraud-proof', async (req, res) => {
+  try {
+    const { batchId, fraudProof, challengerAddress } = req.body;
+    if (!batchId || !fraudProof || !challengerAddress) {
+      return res.status(400).json({ error: 'Batch ID, fraud proof, and challenger address are required' });
+    }
+
+    // Submit fraud proof to the blockchain if connected
+    if (isConnected && contract) {
+      try {
+        const tx = await contract.reportFraud(batchId, fraudProof, challengerAddress);
+        const receipt = await tx.wait();
+        console.log(`Fraud proof submitted. Transaction hash: ${receipt.transactionHash}`);
+      } catch (error) {
+        console.error('Error submitting fraud proof to blockchain:', error);
+        return res.status(500).json({ error: 'Failed to submit fraud proof to blockchain' });
+      }
+    }
+
+    // Save fraud proof in the database
+    const fraudRecord = await prisma.fraudProof.create({
+      data: {
+        batchId,
+        fraudProof,
+        challengerAddress,
+        createdAt: new Date()
+      }
+    });
+
+    res.json({
+      message: 'Fraud proof submitted successfully',
+      fraudRecord
+    });
+  } catch (error) {
+    console.error('Error submitting fraud proof:', error);
+    res.status(500).json({ error: 'Failed to submit fraud proof' });
   }
 });
 

@@ -260,7 +260,6 @@ export async function updateL2Balance(address, amount, isDeduction) {
  */
 export async function submitFraudProof(batchId, challengerAddress, fraudProof) {
     try {
-        // Find the batch
         const batch = await prisma.batch.findUnique({
             where: { batchId },
             include: { transactions: true }
@@ -278,8 +277,11 @@ export async function submitFraudProof(batchId, challengerAddress, fraudProof) {
             return { success: false, message: 'Cannot challenge a finalized batch' };
         }
 
-        // In a real implementation, this would verify the fraud proof
-        // For now, we'll just mark the batch as rejected
+        const isValidFraudProof = validateFraudProof(batch, fraudProof);
+        if (!isValidFraudProof) {
+            return { success: false, message: 'Invalid fraud proof' };
+        }
+
         const updatedBatch = await prisma.batch.update({
             where: { id: batch.id },
             data: {
@@ -289,7 +291,6 @@ export async function submitFraudProof(batchId, challengerAddress, fraudProof) {
             include: { transactions: true }
         });
 
-        // Update transaction statuses
         await prisma.batchTransaction.updateMany({
             where: { batchId: batch.id },
             data: { status: 'rejected' }
@@ -300,4 +301,9 @@ export async function submitFraudProof(batchId, challengerAddress, fraudProof) {
         console.error('Error submitting fraud proof:', error);
         return { success: false, error: error.message };
     }
-} 
+}
+
+function validateFraudProof(batch, fraudProof) {
+    // Add logic to validate fraud proof using Merkle tree
+    return true; // Placeholder for actual validation logic
+}
