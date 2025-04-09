@@ -20,7 +20,7 @@ async function main() {
     // Add test batches with transactions
     const batch1 = await prisma.batch.create({
         data: {
-            batchId: '1',
+            batchId: BigInt(1),
             transactionsRoot: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
             transactions: {
                 create: [
@@ -43,7 +43,7 @@ async function main() {
 
     const batch2 = await prisma.batch.create({
         data: {
-            batchId: '2',
+            batchId: BigInt(2),
             transactionsRoot: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
             verified: true,
             transactions: {
@@ -72,4 +72,4 @@ main()
     })
     .finally(async () => {
         await prisma.$disconnect();
-    }); 
+    });

@@ -6,13 +6,51 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { useToast } from './ui/use-toast';
 import { useWallet } from '../hooks/useWallet';
+import { MerkleTree } from 'merkletreejs';
+import SHA256 from 'crypto-js/sha256';
 
 const FraudProof: React.FC = () => {
     const { address } = useWallet();
     const { toast } = useToast();
     const [batchId, setBatchId] = useState('');
     const [fraudProof, setFraudProof] = useState('');
+    const [merkleProof, setMerkleProof] = useState('');
+    const [batchData, setBatchData] = useState<string[]>([]); // Array of batch data
+    const [generatedMerkleProof, setGeneratedMerkleProof] = useState<string[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const generateMerkleProof = () => {
+        if (!fraudProof || batchData.length === 0) {
+            toast({
+                title: 'Error',
+                description: 'Fraud proof and batch data are required to generate Merkle proof',
+                variant: 'destructive',
+            });
+            return;
+        }
+
+        try {
+            // Hash each batch data item
+            const leaves = batchData.map((data) => SHA256(data).toString());
+            const tree = new MerkleTree(leaves, SHA256);
+            const leaf = SHA256(fraudProof).toString();
+            const proof = tree.getProof(leaf).map((p) => p.data.toString('hex'));
+
+            setGeneratedMerkleProof(proof);
+
+            toast({
+                title: 'Success',
+                description: 'Merkle proof generated successfully',
+            });
+        } catch (error) {
+            console.error('Error generating Merkle proof:', error);
+            toast({
+                title: 'Error',
+                description: 'Failed to generate Merkle proof',
+                variant: 'destructive',
+            });
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -26,10 +64,10 @@ const FraudProof: React.FC = () => {
             return;
         }
 
-        if (!batchId || !fraudProof) {
+        if (!batchId || !fraudProof || !merkleProof) {
             toast({
                 title: 'Error',
-                description: 'Batch ID and fraud proof are required',
+                description: 'Batch ID, fraud proof, and Merkle proof are required',
                 variant: 'destructive',
             });
             return;
@@ -38,36 +76,42 @@ const FraudProof: React.FC = () => {
         setIsSubmitting(true);
 
         try {
-            const response = await fetch('http://localhost:5500/api/rollup/fraud-proof', {
+            const verificationResponse = await fetch('http://localhost:5500/api/rollup/fraud-proof', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
                     batchId,
-                    challengerAddress: address,
                     fraudProof,
+                    merkleProof,
                 }),
             });
 
-            if (!response.ok) {
-                throw new Error('Failed to submit fraud proof');
-            }
+            const verificationResult = await verificationResponse.json();
 
-            const data = await response.json();
+            if (!verificationResult.isValid) {
+                toast({
+                    title: 'Error',
+                    description: 'Fraud proof is invalid',
+                    variant: 'destructive',
+                });
+                return;
+            }
 
             toast({
                 title: 'Success',
-                description: 'Fraud proof submitted successfully',
+                description: 'Fraud proof verified successfully',
             });
 
             setBatchId('');
             setFraudProof('');
+            setMerkleProof('');
         } catch (error) {
-            console.error('Error submitting fraud proof:', error);
+            console.error('Error:', error);
             toast({
                 title: 'Error',
-                description: 'Failed to submit fraud proof',
+                description: 'Failed to verify fraud proof',
                 variant: 'destructive',
             });
         } finally {
@@ -108,6 +152,46 @@ const FraudProof: React.FC = () => {
                             required
                         />
                     </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="merkleProof" className="text-white/70">Merkle Proof</Label>
+                        <Textarea
+                            id="merkleProof"
+                            placeholder="Enter the Merkle proof"
+                            value={merkleProof}
+                            onChange={(e) => setMerkleProof(e.target.value)}
+                            className="min-h-[200px] bg-white/5 border-white/10 text-white placeholder:text-white/50"
+                            required
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="batchData" className="text-white/70">Batch Data</Label>
+                        <Textarea
+                            id="batchData"
+                            placeholder="Enter batch data (comma-separated)"
+                            value={batchData.join(',')}
+                            onChange={(e) => setBatchData(e.target.value.split(','))}
+                            className="min-h-[100px] bg-white/5 border-white/10 text-white placeholder:text-white/50"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Button
+                            type="button"
+                            onClick={generateMerkleProof}
+                            className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                        >
+                            Generate Merkle Proof
+                        </Button>
+                    </div>
+                    {generatedMerkleProof.length > 0 && (
+                        <div className="space-y-2">
+                            <Label className="text-white/70">Generated Merkle Proof</Label>
+                            <Textarea
+                                readOnly
+                                value={generatedMerkleProof.join('\n')}
+                                className="min-h-[100px] bg-white/5 border-white/10 text-white placeholder:text-white/50"
+                            />
+                        </div>
+                    )}
                 </CardContent>
                 <CardFooter className="relative">
                     <Button
@@ -123,4 +207,4 @@ const FraudProof: React.FC = () => {
     );
 };
 
-export default FraudProof; 
+export default FraudProof;

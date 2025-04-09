@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { getTransactionHistory, getLayer2Balance, getLayer1Balance } from '@/lib/ethers';
 import { formatDistanceToNow } from "date-fns";
-import { formatEther } from "ethers";
+import { formatEther, parseUnits } from 'ethers';
 import { useWallet } from "@/hooks/useWallet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from 'react-router-dom';
@@ -16,6 +16,18 @@ import { Button } from "@/components/ui/button";
 // Helper function to format addresses
 const formatAddress = (address: string) => {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+};
+
+// Helper function to format transaction values
+const formatTransactionValue = (value: string) => {
+  try {
+    // Convert to BigInt after scaling if the value is a floating-point number
+    const scaledValue = BigInt(Math.floor(parseFloat(value) * 1e18));
+    return formatEther(scaledValue);
+  } catch {
+    console.error(`Invalid transaction value: ${value}`);
+    return 'Invalid';
+  }
 };
 
 // Define the Transaction interface
@@ -252,7 +264,7 @@ export function TransactionTracker({ mode, address, showOverview = false }: Tran
                     {formatAddress(tx.to)}
                   </TableCell>
                   <TableCell className="font-medium text-white/90">
-                    {formatEther(tx.value)} ETH
+                    {tx.value ? formatTransactionValue(tx.value) : "0"} ETH
                   </TableCell>
                   <TableCell>
                     {getStatusBadge(tx.status)}
