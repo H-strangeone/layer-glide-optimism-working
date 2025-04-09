@@ -7,21 +7,23 @@ import { toast } from "@/components/ui/use-toast";
 const Navbar: React.FC = () => {
   const { address, isConnected, isConnecting, connect, disconnect } = useWallet();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userRoles, setUserRoles] = useState<string[]>([]);
 
   useEffect(() => {
-    const checkAdminStatus = async () => {
+    const fetchUserRoles = async () => {
       if (!address) return;
 
       try {
         const response = await fetch(`http://localhost:5500/api/admin/check?address=${address}`);
         const data = await response.json();
         setIsAdmin(data.isAdmin);
+        setUserRoles(data.roles || []); // Assuming the API returns a 'roles' array
       } catch (error) {
-        console.error('Error checking admin status:', error);
+        console.error('Error fetching user roles:', error);
       }
     };
 
-    checkAdminStatus();
+    fetchUserRoles();
   }, [address]);
 
   const handleConnect = async () => {
@@ -50,6 +52,11 @@ const Navbar: React.FC = () => {
             </Link>
             {isConnected && (
               <div className="flex space-x-6">
+                {userRoles.map((role) => (
+                  <span key={role} className="text-white/70 hover:text-white transition-colors duration-200">
+                    {role}
+                  </span>
+                ))}
                 <Link
                   to="/transactions"
                   className="text-white/70 hover:text-white transition-colors duration-200"

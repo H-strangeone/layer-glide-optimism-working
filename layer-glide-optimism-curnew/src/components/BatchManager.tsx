@@ -4,10 +4,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/use-toast';
-import { ethers } from 'ethers';
+import { formatEther } from 'ethers';
 import { useWallet } from "@/hooks/useWallet";
 import { formatDistanceToNow } from "date-fns";
-import { formatEther } from "ethers";
 import { Loader2, Package, ChevronDown, ChevronUp } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
@@ -42,6 +41,18 @@ interface BatchManagerProps {
 
 const formatAddress = (address: string) => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
+};
+
+// Update the formatTransactionValue function to handle floating-point numbers
+const formatTransactionValue = (value: string) => {
+    try {
+        // Convert to BigInt after scaling if the value is a floating-point number
+        const scaledValue = BigInt(Math.floor(parseFloat(value) * 1e18));
+        return formatEther(scaledValue);
+    } catch {
+        console.error(`Invalid transaction value: ${value}`);
+        return 'Invalid';
+    }
 };
 
 export function BatchManager({ address }: BatchManagerProps) {
@@ -368,7 +379,7 @@ export function BatchManager({ address }: BatchManagerProps) {
                                                                 {formatAddress(tx.to)}
                                                             </TableCell>
                                                             <TableCell className="text-white/90">
-                                                                {formatEther(tx.value)} ETH
+                                                                {formatTransactionValue(tx.value)} ETH
                                                             </TableCell>
                                                             <TableCell>
                                                                 {getStatusBadge(tx.status)}
@@ -395,4 +406,4 @@ export function BatchManager({ address }: BatchManagerProps) {
             </CardContent>
         </Card>
     );
-} 
+}

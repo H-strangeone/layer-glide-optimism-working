@@ -450,19 +450,19 @@ export const finalizeBatch = async (batchId: number) => {
 export const reportFraudWithMerkleProof = async (
   batchId: number,
   fraudProof: string,
-  tx: { sender: string, recipient: string, amount: string },
+  transaction: { sender: string, recipient: string, amount: string },
   merkleProof: string[]
 ) => {
   try {
     const contract = await getContract();
 
     // Convert amount to wei
-    const amountInWei = parseEther(tx.amount);
+    const amountInWei = parseEther(transaction.amount);
 
     // Create the transaction object
     const txObj = {
-      sender: tx.sender,
-      recipient: tx.recipient,
+      sender: transaction.sender,
+      recipient: transaction.recipient,
       amount: amountInWei
     };
 

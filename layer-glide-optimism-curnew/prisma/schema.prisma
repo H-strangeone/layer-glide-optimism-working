@@ -57,8 +57,8 @@ model Balance {
 }
 
 model Batch {
-  id              String   @id @default(uuid())
-  batchId         String   @unique
+  id              BigInt   @id @default(autoincrement())
+  batchId         BigInt   @unique
   transactionsRoot String
   verified        Boolean  @default(false)
   finalized       Boolean  @default(false)
@@ -71,25 +71,32 @@ model Batch {
 }
 
 model BatchTransaction {
-  id        String   @id @default(uuid())
+  id        BigInt   @id @default(autoincrement())
   from      String
   to        String
   value     String
   status    String   @default("pending")
-  batchId   String
+  batchId   BigInt
   batch     Batch    @relation(fields: [batchId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model BatchChallenge {
-  id                String   @id @default(uuid())
+  id                BigInt   @id @default(autoincrement())
   batch            Batch    @relation(fields: [batchId], references: [id])
-  batchId          String
+  batchId          BigInt
   challengerAddress String
   status           String   // pending, accepted, rejected
   resolvedBy       String?
   resolvedAt       DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-} 
+}
+
+model BatchReport {
+  id        String   @id @default(uuid())
+  batchId   BigInt
+  reason    String
+  createdAt DateTime @default(now())
+}
