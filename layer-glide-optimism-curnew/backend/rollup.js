@@ -1,8 +1,11 @@
 import { ethers } from 'ethers';
 import { PrismaClient } from '@prisma/client';
 import MerkleTree from './merkleTree.js';
+import express from 'express';
+import { verifyFraudProof } from './services/fraudProofService.js';
 
 const prisma = new PrismaClient();
+const router = express.Router();
 
 // Configuration
 const BATCH_SIZE = 10; // Number of transactions per batch
@@ -103,11 +106,22 @@ export async function verifyBatch(batchId) {
             return { success: false, message: 'Batch already verified' };
         }
 
-        // In a real implementation, this would verify the batch on the blockchain
-        // For now, we'll just mark it as verified
+        // Interact with the blockchain to verify the batch
+        if (contract) {
+            const numericBatchId = BigInt(batchId);
+            const tx = await contract.verifyBatch(numericBatchId);
+            await tx.wait();
+        } else {
+            console.warn('Blockchain contract not connected. Skipping on-chain verification.');
+        }
+
+        // Mark the batch as verified and set the challenge start timestamp
         const updatedBatch = await prisma.batch.update({
             where: { id: batch.id },
-            data: { verified: true },
+            data: {
+                verified: true,
+                challengeStart: new Date() // Add challenge start timestamp
+            },
             include: { transactions: true }
         });
 
@@ -307,3 +321,23 @@ function validateFraudProof(batch, fraudProof) {
     // Add logic to validate fraud proof using Merkle tree
     return true; // Placeholder for actual validation logic
 }
+
+// Fraud-proof endpoint
+router.post('/fraud-proof', async (req, res) => {
+    const { batchId, fraudProof, merkleProof } = req.body;
+
+    try {
+        const isValid = await verifyFraudProof(batchId, fraudProof, merkleProof);
+
+        if (!isValid) {
+            return res.status(400).json({ isValid: false, message: 'Invalid fraud proof' });
+        }
+
+        res.json({ isValid: true, message: 'Fraud proof verified successfully' });
+    } catch (error) {
+        console.error('Error verifying fraud proof:', error);
+        res.status(500).json({ isValid: false, message: 'Internal server error' });
+    }
+});
+
+export default router;

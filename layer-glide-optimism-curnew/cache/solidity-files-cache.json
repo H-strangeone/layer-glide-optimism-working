@@ -72,6 +72,78 @@
       "artifacts": [
         "Layer2Scaling"
       ]
+    },
+    "C:\\Users\\sanje\\layer-glide-optimism-working\\layer-glide-optimism-curnew\\contracts\\Layer2Scaling.sol": {
+      "lastModificationDate": 1744221908920,
+      "contentHash": "9f8c1f72b5eee986c781ba68a79ea823",
+      "sourceName": "contracts/Layer2Scaling.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "Layer2Scaling"
+      ]
+    },
+    "C:\\Users\\sanje\\layer-glide-optimism-working\\layer-glide-optimism-curnew\\contracts\\Rollup.sol": {
+      "lastModificationDate": 1744221374524,
+      "contentHash": "30c92b389d8d98b2a4b4d9b694da1000",
+      "sourceName": "contracts/Rollup.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "Rollup"
+      ]
     }
   }
 }

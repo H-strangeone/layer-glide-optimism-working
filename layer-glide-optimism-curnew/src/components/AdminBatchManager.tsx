@@ -164,23 +164,34 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
 
         setIsLoading(true);
         try {
-            // In a real implementation, we would:
-            // 1. Fetch pending transactions from the database
-            // 2. Create a Merkle tree from these transactions
-            // 3. Submit the Merkle root to the contract
+            // Fetch pending transactions from the database
+            const response = await fetch('http://localhost:5500/api/transactions/pending');
+            if (!response.ok) {
+                throw new Error('Failed to fetch pending transactions');
+            }
+            const pendingTransactions: Transaction[] = await response.json();
 
-            // For demonstration purposes, we'll create a dummy transaction and Merkle root
-            const dummyTransaction: Transaction = {
-                sender: address,
-                recipient: "0x0000000000000000000000000000000000000000",
-                amount: "0.1"
-            };
+            if (pendingTransactions.length === 0) {
+                toast({
+                    title: "No Transactions",
+                    description: "No pending transactions to batch",
+                    variant: "default",
+                });
+                return;
+            }
 
-            const dummyTransactions = [dummyTransaction];
-            const merkleTree = createMerkleTreeFromTransactions(dummyTransactions);
-            const root = merkleTree.getRoot(); // Root is already a hex string
+            // Create a Merkle tree from the transactions
+            const merkleTree = createMerkleTreeFromTransactions(pendingTransactions);
+            const root = merkleTree.getRoot();
 
-            await submitBatchWithMerkleRoot(root);
+            // Submit the Merkle root to the contract
+            const tx = await submitBatchWithMerkleRoot(root);
+            await tx.wait();
+
+            console.log("Batch submitted successfully:", {
+                merkleRoot: root,
+                transactionHash: tx.hash,
+            });
 
             toast({
                 title: "Batch Submitted",
@@ -202,70 +213,23 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
     };
 
     const handleVerifyBatch = async (batchId: string) => {
-        if (!address) {
-            toast({
-                title: "Error",
-                description: "Please connect your wallet first",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        setIsLoading(true);
         try {
-            const contract = await getContract();
-            if (!contract) {
-                throw new Error('Failed to get contract instance');
-            }
-
-            const selectedBatch = batches.find(b => b.id === batchId);
-            if (!selectedBatch) {
-                throw new Error('Selected batch not found');
-            }
-
-            // Convert batchId to BigInt by parsing it as a hexadecimal string
-            const numericBatchId = BigInt(`0x${selectedBatch.batchId.replace(/-/g, "")}`);
-
-            console.log(`Verifying batch with ID: ${numericBatchId}`);
-
-            // Check if the batch exists on the blockchain
-            const batchData = await contract.batches(numericBatchId);
-            if (batchData.batchId === 0n) {
-                throw new Error('Batch does not exist on the blockchain');
-            }
-
-            const tx = await contract.verifyBatch(numericBatchId);
-            await tx.wait();
-
-            const response = await fetch('http://localhost:5500/api/batches/verify', {
+            const response = await fetch(`/api/rollup/batch/verify`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-admin-address': address
                 },
-                body: JSON.stringify({ batchId }),
+                body: JSON.stringify({ batchId: BigInt(batchId).toString() }),
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Failed to update batch status in database');
+                throw new Error(`Failed to verify batch: ${response.statusText}`);
             }
 
-            toast({
-                title: "Success",
-                description: "Batch verified successfully",
-            });
-
-            await fetchBatches();
+            const data = await response.json();
+            console.log('Batch verified successfully:', data);
         } catch (error) {
             console.error('Error verifying batch:', error);
-            toast({
-                title: "Error",
-                description: error instanceof Error ? error.message : 'Failed to verify batch',
-                variant: "destructive",
-            });
-        } finally {
-            setIsLoading(false);
         }
     };
 

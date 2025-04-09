@@ -94,14 +94,22 @@ export class MerkleTree {
 }
 
 export function createMerkleTreeFromTransactions(transactions: Transaction[]): MerkleTree {
-  const elements = transactions.map(tx =>
-    ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ['address', 'address', 'uint256'],
-        [tx.sender, tx.recipient, ethers.parseEther(tx.amount)]
+  const elements = transactions
+    .filter(tx => {
+      if (!tx.amount || isNaN(Number(tx.amount))) {
+        console.warn(`Invalid transaction amount: ${tx.amount}`);
+        return false;
+      }
+      return true;
+    })
+    .map(tx =>
+      ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ['address', 'address', 'uint256'],
+          [tx.sender, tx.recipient, ethers.parseEther(tx.amount)]
+        )
       )
-    )
-  );
+    );
 
   return new MerkleTree(elements);
 }

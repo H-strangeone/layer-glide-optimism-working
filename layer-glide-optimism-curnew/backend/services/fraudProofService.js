@@ -1,6 +1,6 @@
-const crypto = require('crypto');
+import crypto from 'crypto';
 
-async function verifyFraudProof(batchId, fraudProof, merkleProof) {
+export async function verifyFraudProof(batchId, fraudProof, merkleProof) {
     // Fetch batch data from the database (pseudo-code)
     // const batchData = await getBatchData(batchId);
 
@@ -9,5 +9,3 @@ async function verifyFraudProof(batchId, fraudProof, merkleProof) {
 
     return isValid;
 }
-
-module.exports = { verifyFraudProof };
