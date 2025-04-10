@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 contract Layer2Scaling {
     struct Batch {
@@ -20,11 +20,15 @@ contract Layer2Scaling {
     uint256 public nextBatchId;
     mapping(address => uint256) public balances;
     uint256 public slashingPenalty = 0.05 ether;
-    
+
     // Add admin role
     address public admin;
     mapping(address => bool) public isOperator;
-    
+
+    // Additions from Rollup.sol
+    mapping(uint256 => bytes32) public batchMerkleRoots;
+    mapping(uint256 => bool) public isBatchFraudulent;
+
     event AdminChanged(address indexed previousAdmin, address indexed newAdmin);
     event OperatorAdded(address indexed operator);
     event OperatorRemoved(address indexed operator);
@@ -82,6 +86,7 @@ contract Layer2Scaling {
         require(_transactionsRoots.length > 0, "Batch must contain transactions");
         for (uint256 i = 0; i < _transactionsRoots.length; i++) {
             batches[nextBatchId] = Batch(nextBatchId, _transactionsRoots[i], block.timestamp, false, false);
+            batchMerkleRoots[nextBatchId] = _transactionsRoots[i];
             emit BatchSubmitted(nextBatchId, _transactionsRoots[i]);
             nextBatchId++;
         }
@@ -94,20 +99,16 @@ contract Layer2Scaling {
         emit BatchVerified(_batchId);
     }
 
-    function reportFraud(uint256 _batchId, bytes32 _fraudProof, Transaction memory _tx, bytes32[] memory _merkleProof) external batchExists(_batchId) {
-        require(!batches[_batchId].verified, "Cannot report fraud on a verified batch");
-        require(!batches[_batchId].finalized, "Cannot report fraud on a finalized batch");
+    function reportFraud(uint256 batchId, bytes32 fraudProofHash, bytes32[] calldata merkleProof) external {
+        require(!isBatchFraudulent[batchId], "Batch already marked as fraudulent");
 
-        bool fraudFound = detectFraud(_batchId, _fraudProof, _tx, _merkleProof);
-        if (!fraudFound) {
-            require(balances[msg.sender] >= slashingPenalty, "Insufficient balance for penalty");
-            balances[msg.sender] -= slashingPenalty;
-            emit FraudPenaltyApplied(msg.sender, slashingPenalty);
-        } else {
-            // Invalidate batch (simplified for demo)
-            batches[_batchId].transactionsRoot = bytes32(0);
-        }
-        emit FraudReported(_batchId, _fraudProof);
+        // Verify the fraud proof using the Merkle proof
+        bytes32 root = batchMerkleRoots[batchId];
+        require(verifyMerkleProof(fraudProofHash, merkleProof, root), "Invalid fraud proof");
+
+        // Mark the batch as fraudulent
+        isBatchFraudulent[batchId] = true;
+        emit FraudReported(batchId, fraudProofHash);
     }
 
     function detectFraud(uint256 _batchId, bytes32 _fraudProof, Transaction memory _tx, bytes32[] memory _merkleProof) internal view returns (bool) {
@@ -118,12 +119,17 @@ contract Layer2Scaling {
 
     function verifyMerkleProof(bytes32 leaf, bytes32[] memory proof, bytes32 root) internal pure returns (bool) {
         bytes32 computedHash = leaf;
+
         for (uint256 i = 0; i < proof.length; i++) {
             bytes32 proofElement = proof[i];
-            computedHash = computedHash < proofElement ? 
-                keccak256(abi.encodePacked(computedHash, proofElement)) : 
-                keccak256(abi.encodePacked(proofElement, computedHash));
+
+            if (computedHash <= proofElement) {
+                computedHash = keccak256(abi.encodePacked(computedHash, proofElement));
+            } else {
+                computedHash = keccak256(abi.encodePacked(proofElement, computedHash));
+            }
         }
+
         return computedHash == root;
     }
 
@@ -165,7 +171,7 @@ contract Layer2Scaling {
             totalAmount += _amounts[i];
         }
         require(balances[msg.sender] >= totalAmount, "Insufficient Layer 2 balance");
-        
+
         balances[msg.sender] -= totalAmount;
         for (uint256 i = 0; i < _recipients.length; i++) {
             balances[_recipients[i]] += _amounts[i];

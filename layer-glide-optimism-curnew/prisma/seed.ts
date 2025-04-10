@@ -1,4 +1,6 @@
 import { PrismaClient } from '@prisma/client';
+import { keccak256 } from 'ethers';
+
 const prisma = new PrismaClient();
 
 async function main() {
@@ -65,10 +67,44 @@ async function main() {
     console.log('Added transactions:', 3);
 }
 
+async function migrateBatchIds() {
+    console.log('Starting migration of batch IDs...');
+
+    // Fetch all batches with UUID-based IDs
+    const batches = await prisma.batch.findMany({
+        where: {
+            batchId: null, // Assuming null indicates UUID-based IDs
+        },
+    });
+
+    for (const batch of batches) {
+        // Generate a BigInt-compatible batch ID using keccak256 hash of the UUID
+        const newBatchId = BigInt(keccak256(Buffer.from(batch.id.toString())).toString());
+
+        // Update the batch with the new BigInt batch ID
+        await prisma.batch.update({
+            where: { id: batch.id },
+            data: { batchId: newBatchId },
+        });
+
+        console.log(`Migrated batch ${batch.id} to new batchId: ${newBatchId}`);
+    }
+
+    console.log('Batch ID migration completed.');
+}
+
 main()
     .catch((e) => {
         console.error(e);
         process.exit(1);
+    })
+    .finally(async () => {
+        await prisma.$disconnect();
+    });
+
+migrateBatchIds()
+    .catch((error) => {
+        console.error('Error during batch ID migration:', error);
     })
     .finally(async () => {
         await prisma.$disconnect();

@@ -369,23 +369,36 @@ export const batchTransfer = executeL2BatchTransaction;
 // Submit a batch with Merkle root
 export const submitBatchWithMerkleRoot = async (merkleRoot: string) => {
   try {
+    if (!merkleRoot || typeof merkleRoot !== 'string') {
+      throw new Error('Invalid Merkle root: Merkle root must be a non-empty string');
+    }
+
     const contract = await getContract();
+    if (!contract) {
+      throw new Error('Failed to initialize contract instance');
+    }
+
+    console.log('Submitting batch with Merkle root:', merkleRoot);
+
     // Get the current batch ID
     const nextBatchId = await contract.nextBatchId();
+    console.log('Next batch ID:', nextBatchId.toString());
+
     // Submit the batch with the current batch ID
     const tx = await contract.submitBatch([merkleRoot]);
     await tx.wait();
+
     toast({
-      title: "Success",
-      description: "Batch submitted successfully",
+      title: 'Success',
+      description: 'Batch submitted successfully',
     });
     return tx;
   } catch (error) {
-    console.error("Error submitting batch:", error);
+    console.error('Error submitting batch:', error);
     toast({
-      title: "Error",
-      description: "Failed to submit batch",
-      variant: "destructive",
+      title: 'Error',
+      description: 'Failed to submit batch: ' + (error instanceof Error ? error.message : String(error)),
+      variant: 'destructive',
     });
     throw error;
   }

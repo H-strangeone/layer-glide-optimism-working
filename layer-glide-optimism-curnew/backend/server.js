@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import { PrismaClient } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
 import MerkleTree from './merkleTree.js';
 import * as rollup from './rollup.js';
 import dotenv from 'dotenv';
@@ -221,6 +220,11 @@ const adminAuth = async (req, res, next) => {
     console.error('Admin authentication error:', error);
     res.status(500).json({ success: false, message: 'Authentication error' });
   }
+};
+
+// Utility function to generate uint256-compatible batch ID
+const generateBatchId = () => {
+  return BigInt(Date.now()).toString(); // Example: Use timestamp as uint256-compatible ID
 };
 
 // API Routes
@@ -548,7 +552,7 @@ app.post('/api/transactions', async (req, res) => {
     // Use a transaction to ensure atomicity
     const result = await prisma.$transaction(async (prisma) => {
       // Generate a unique batch ID
-      const batchId = uuidv4();
+      const batchId = generateBatchId();
 
       // Create the batch first
       const batch = await prisma.batch.create({
@@ -824,34 +828,34 @@ app.get('/api/balance/:address', async (req, res) => {
 
 // Get pending transactions
 app.get('/api/transactions/pending', async (req, res) => {
-  try {
-    const pendingTransactions = await prisma.transaction.findMany({
-      where: {
-        status: 'pending'
-      },
-      orderBy: {
-        timestamp: 'asc'
-      },
-      select: {
-        id: true,
-        sender: true,
-        recipient: true,
-        amount: true,
-        status: true,
-        timestamp: true
-      }
-    });
+    try {
+        const pendingTransactions = await prisma.batchTransaction.findMany({
+            where: {
+                status: 'pending'
+            },
+            orderBy: {
+                createdAt: 'asc'
+            },
+            select: {
+                id: true,
+                from: true,
+                to: true,
+                value: true,
+                status: true,
+                createdAt: true
+            }
+        });
 
-    const formattedTransactions = pendingTransactions.map(tx => ({
-      ...tx,
-      timestamp: tx.timestamp.toISOString()
-    }));
+        const formattedTransactions = pendingTransactions.map(tx => ({
+            ...tx,
+            createdAt: tx.createdAt.toISOString()
+        }));
 
-    return res.status(200).json(formattedTransactions);
-  } catch (error) {
-    console.error('Error fetching pending transactions:', error);
-    return res.status(500).json({ error: 'Failed to fetch pending transactions' });
-  }
+        return res.status(200).json(formattedTransactions);
+    } catch (error) {
+        console.error('Error fetching pending transactions:', error);
+        return res.status(500).json({ error: 'Failed to fetch pending transactions' });
+    }
 });
 
 // Balance update endpoint - moved to root level

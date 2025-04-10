@@ -1,3 +1,4 @@
+import { Buffer } from 'buffer';
 import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +17,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Package } from "lucide-react";
+import { keccak256 } from 'ethers';
 
 interface BatchTransaction {
     from: string;
@@ -36,6 +38,7 @@ interface BlockchainBatch {
 interface Batch extends BlockchainBatch {
     batchId: string;
     rejected: boolean;
+    fraudulent?: boolean;
     transactions: BatchTransaction[];
 }
 
@@ -164,23 +167,34 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
 
         setIsLoading(true);
         try {
-            // In a real implementation, we would:
-            // 1. Fetch pending transactions from the database
-            // 2. Create a Merkle tree from these transactions
-            // 3. Submit the Merkle root to the contract
+            // Fetch pending transactions from the database
+            const response = await fetch('http://localhost:5500/api/transactions/pending');
+            if (!response.ok) {
+                throw new Error('Failed to fetch pending transactions');
+            }
+            const pendingTransactions: Transaction[] = await response.json();
 
-            // For demonstration purposes, we'll create a dummy transaction and Merkle root
-            const dummyTransaction: Transaction = {
-                sender: address,
-                recipient: "0x0000000000000000000000000000000000000000",
-                amount: "0.1"
-            };
+            if (pendingTransactions.length === 0) {
+                toast({
+                    title: "No Transactions",
+                    description: "No pending transactions to batch",
+                    variant: "default",
+                });
+                return;
+            }
 
-            const dummyTransactions = [dummyTransaction];
-            const merkleTree = createMerkleTreeFromTransactions(dummyTransactions);
-            const root = merkleTree.getRoot(); // Root is already a hex string
+            // Create a Merkle tree from the transactions
+            const merkleTree = createMerkleTreeFromTransactions(pendingTransactions);
+            const root = merkleTree.getRoot();
 
-            await submitBatchWithMerkleRoot(root);
+            // Submit the Merkle root to the contract
+            const tx = await submitBatchWithMerkleRoot(root);
+            await tx.wait();
+
+            console.log("Batch submitted successfully:", {
+                merkleRoot: root,
+                transactionHash: tx.hash,
+            });
 
             toast({
                 title: "Batch Submitted",
@@ -202,70 +216,27 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
     };
 
     const handleVerifyBatch = async (batchId: string) => {
-        if (!address) {
-            toast({
-                title: "Error",
-                description: "Please connect your wallet first",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        setIsLoading(true);
         try {
-            const contract = await getContract();
-            if (!contract) {
-                throw new Error('Failed to get contract instance');
-            }
+            // Check if batchId is a UUID and convert it to a BigInt-compatible value
+            const isUUID = /^[0-9a-fA-F-]{36}$/.test(batchId);
+            const numericBatchId = isUUID ? BigInt(keccak256(Buffer.from(batchId)).toString()) : BigInt(batchId);
 
-            const selectedBatch = batches.find(b => b.id === batchId);
-            if (!selectedBatch) {
-                throw new Error('Selected batch not found');
-            }
-
-            // Convert batchId to BigInt by parsing it as a hexadecimal string
-            const numericBatchId = BigInt(`0x${selectedBatch.batchId.replace(/-/g, "")}`);
-
-            console.log(`Verifying batch with ID: ${numericBatchId}`);
-
-            // Check if the batch exists on the blockchain
-            const batchData = await contract.batches(numericBatchId);
-            if (batchData.batchId === 0n) {
-                throw new Error('Batch does not exist on the blockchain');
-            }
-
-            const tx = await contract.verifyBatch(numericBatchId);
-            await tx.wait();
-
-            const response = await fetch('http://localhost:5500/api/batches/verify', {
+            const response = await fetch(`/api/batches/verify`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-admin-address': address
                 },
-                body: JSON.stringify({ batchId }),
+                body: JSON.stringify({ batchId: numericBatchId.toString() }),
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Failed to update batch status in database');
+                throw new Error(`Failed to verify batch: ${response.statusText}`);
             }
 
-            toast({
-                title: "Success",
-                description: "Batch verified successfully",
-            });
-
-            await fetchBatches();
+            const data = await response.json();
+            console.log('Batch verified successfully:', data);
         } catch (error) {
             console.error('Error verifying batch:', error);
-            toast({
-                title: "Error",
-                description: error instanceof Error ? error.message : 'Failed to verify batch',
-                variant: "destructive",
-            });
-        } finally {
-            setIsLoading(false);
         }
     };
 
@@ -534,6 +505,9 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
     const getStatusBadge = (batch: Batch) => {
         if (batch.rejected) {
             return <Badge variant="destructive" className="flex items-center gap-1"><AlertCircle size={14} /> Rejected</Badge>;
+        }
+        if (batch.fraudulent) {
+            return <Badge variant="destructive" className="flex items-center gap-1"><AlertCircle size={14} /> Fraudulent</Badge>;
         }
         if (batch.finalized) {
             return <Badge variant="default" className="flex items-center gap-1"><CheckCircle size={14} /> Finalized</Badge>;
