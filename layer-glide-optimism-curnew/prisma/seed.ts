@@ -79,7 +79,7 @@ async function migrateBatchIds() {
 
     for (const batch of batches) {
         // Generate a BigInt-compatible batch ID using keccak256 hash of the UUID
-        const newBatchId = BigInt(keccak256(Buffer.from(batch.id)).toString());
+        const newBatchId = BigInt(keccak256(Buffer.from(batch.id.toString())).toString());
 
         // Update the batch with the new BigInt batch ID
         await prisma.batch.update({

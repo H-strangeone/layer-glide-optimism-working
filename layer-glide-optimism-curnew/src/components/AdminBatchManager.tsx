@@ -1,3 +1,4 @@
+import { Buffer } from 'buffer';
 import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +17,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Package } from "lucide-react";
+import { keccak256 } from 'ethers';
 
 interface BatchTransaction {
     from: string;
@@ -36,6 +38,7 @@ interface BlockchainBatch {
 interface Batch extends BlockchainBatch {
     batchId: string;
     rejected: boolean;
+    fraudulent?: boolean;
     transactions: BatchTransaction[];
 }
 
@@ -214,12 +217,16 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
 
     const handleVerifyBatch = async (batchId: string) => {
         try {
-            const response = await fetch(`/api/rollup/batch/verify`, {
+            // Check if batchId is a UUID and convert it to a BigInt-compatible value
+            const isUUID = /^[0-9a-fA-F-]{36}$/.test(batchId);
+            const numericBatchId = isUUID ? BigInt(keccak256(Buffer.from(batchId)).toString()) : BigInt(batchId);
+
+            const response = await fetch(`/api/batches/verify`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ batchId: BigInt(batchId).toString() }),
+                body: JSON.stringify({ batchId: numericBatchId.toString() }),
             });
 
             if (!response.ok) {
@@ -498,6 +505,9 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
     const getStatusBadge = (batch: Batch) => {
         if (batch.rejected) {
             return <Badge variant="destructive" className="flex items-center gap-1"><AlertCircle size={14} /> Rejected</Badge>;
+        }
+        if (batch.fraudulent) {
+            return <Badge variant="destructive" className="flex items-center gap-1"><AlertCircle size={14} /> Fraudulent</Badge>;
         }
         if (batch.finalized) {
             return <Badge variant="default" className="flex items-center gap-1"><CheckCircle size={14} /> Finalized</Badge>;
