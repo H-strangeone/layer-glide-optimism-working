@@ -16,7 +16,7 @@ dotenv.config({ path: join(__dirname, '../.env') });
 const app = express();
 const PORT = 5500;
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({ datasources: { db: { url: 'file:../prisma/dev.db' } } });
 
 // Middleware
 app.use(cors());
@@ -322,6 +322,9 @@ app.post('/api/batches/verify', adminAuth, async (req, res) => {
     if (!batchId) {
       return res.status(400).json({ error: 'Batch ID is required' });
     }
+
+    console.log('Request received at /api/batches/verify');
+    console.log('Batch ID received:', batchId);
 
     // Find the batch in the database
     const batch = await prisma.batch.findUnique({

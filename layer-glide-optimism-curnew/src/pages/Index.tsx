@@ -18,6 +18,10 @@ export default function Index() {
 
   const handleSuccess = async (transaction) => {
     try {
+      if (!transaction.from || !transaction.to || !transaction.value || isNaN(Number(transaction.value))) {
+        throw new Error('Transaction properties are missing or invalid');
+      }
+
       // Format the transaction data according to the API requirements
       const formattedTransaction = {
         transactions: Array.isArray(transaction) ? transaction.map(tx => ({

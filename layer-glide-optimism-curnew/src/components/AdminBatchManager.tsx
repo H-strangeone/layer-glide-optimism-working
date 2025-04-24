@@ -221,7 +221,8 @@ export default function AdminBatchManager({ isAdmin, isOperator = false }: Admin
             const isUUID = /^[0-9a-fA-F-]{36}$/.test(batchId);
             const numericBatchId = isUUID ? BigInt(keccak256(Buffer.from(batchId)).toString()) : BigInt(batchId);
 
-            const response = await fetch(`/api/batches/verify`, {
+            // Send batchId as a string to the backend
+            const response = await fetch('http://localhost:5500/api/batches/verify', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

@@ -1,4 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
+import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
@@ -133,6 +133,21 @@ async function main() {
 
         console.log('Created/Updated operators:', operator1.id, operator2.id);
 
+        // Merge logic from prisma/seed.js and scripts/seed.mjs
+        const additionalOperators = [
+            { address: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' },
+        ];
+
+        for (const operator of additionalOperators) {
+            await prisma.operator.upsert({
+                where: { address: operator.address },
+                update: {},
+                create: operator
+            });
+        }
+
+        console.log('Added additional operators:', additionalOperators.length);
+
         // Create some Layer2Balances
         console.log('Creating Layer2Balances...');
         const balance1 = await prisma.layer2Balance.upsert({
@@ -251,4 +266,4 @@ main()
     })
     .finally(async () => {
         await prisma.$disconnect();
-    }); 
+    });
