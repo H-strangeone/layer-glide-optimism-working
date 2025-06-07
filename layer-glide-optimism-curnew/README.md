@@ -69,9 +69,9 @@ VITE_CONTRACT_ADDRESS=0xYourDeployedContractAddress
 
 ---
 
-## ⚙ Setup Instructions
+##  Setup Instructions
 
-### 🔧 Prerequisites
+###  Prerequisites
 
 - Node.js (v16+)
 - `npm` or `yarn`
