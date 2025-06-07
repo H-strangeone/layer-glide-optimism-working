@@ -1,76 +1,141 @@
-# Layer 2 Optimistic Rollup
+#  Layer 2 Optimistic Rollup dApp
 
-This project implements a Layer 2 scaling solution using Optimistic Rollups on Ethereum. It includes a frontend interface, backend server, and smart contract for managing off-chain transactions.
+This project implements a full-stack **Layer 2 scaling solution** using **Optimistic Rollups** on Ethereum. It includes:
 
-## Setup Instructions
+-  Smart contracts for off-chain transaction handling  
+-  A backend server for coordination and fraud handling  
+-  A frontend dashboard for users to batch, verify, and monitor transactions
 
-### Prerequisites
+---
+
+##  Features
+
+-  Wallet integration via MetaMask  
+-  Batch transaction submission  
+-  Optimistic rollup architecture with Merkle tree state management  
+-  Fraud proof mechanism (concept-level)  
+-  Balance verification and withdrawal functionality  
+-  Real-time Layer 1 ↔ Layer 2 sync capability
+
+---
+
+##  Tech Stack
+
+| Layer           | Tools / Frameworks                                       |
+|-----------------|----------------------------------------------------------|
+| **Smart Contract** | Solidity, Hardhat, OpenZeppelin                   |
+| **Backend**        | Node.js, Express, Prisma ORM, PostgreSQL          |
+| **Frontend**       | React.js, TypeScript, Tailwind CSS, Vite          |
+| **Blockchain**     | Ethers.js, MetaMask, Optimism Rollup (Sepolia)    |
+| **Dev**            | dotenv, Alchemy API, PM2 (optional for prod)      |
+
+---
+
+##  Folder Structure
+
+```
+layer-glide-optimism/
+├── backend/           # Node.js + Express server
+│   └── server.js
+├── contracts/         # Solidity smart contracts
+│   └── Rollup.sol
+├── frontend/          # React + Tailwind UI
+│   └── src/
+├── prisma/            # DB schema + migration scripts
+├── scripts/           # Hardhat deploy scripts
+├── .env               # Env variables (see below)
+├── hardhat.config.js
+├── package.json
+└── README.md
+```
+
+---
+
+##  .env File Setup
+
+Create a `.env` file in the root (based on `.env.example`):
+
+```env
+# Alchemy API key
+ALCHEMY_API_KEY=your_alchemy_api_key_here
+
+# Wallet private key (keep secure!)
+PRIVATE_KEY=your_private_key_here
+
+# Smart contract address after deployment
+CONTRACT_ADDRESS=0xYourDeployedContractAddress
+VITE_CONTRACT_ADDRESS=0xYourDeployedContractAddress
+```
+
+---
+
+## ⚙ Setup Instructions
+
+### 🔧 Prerequisites
 
 - Node.js (v16+)
-- npm or yarn
+- `npm` or `yarn`
 - MetaMask browser extension
-- Alchemy API key (get one from [Alchemy](https://www.alchemy.com/))
-- Ethereum wallet with private key
+- Alchemy API key from [https://alchemy.com](https://alchemy.com)
+- Ethereum wallet with private key (test wallet)
 
-### Environment Setup
+---
 
-1. Create a `.env` file in the project root (copy from `.env.example`):
-   ```
-   # Alchemy API key - Get it from https://www.alchemy.com/
-   ALCHEMY_API_KEY=your_alchemy_api_key_here
+##  Run Instructions (in order)
 
-   # Your wallet's private key (NEVER share this or commit to git)
-   PRIVATE_KEY=your_wallet_private_key_here
+### 1. Start Local Hardhat Node (optional)
 
-   # Contract address
-   CONTRACT_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
-   VITE_CONTRACT_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
-   ```
+```bash
+npx hardhat node
+```
 
-2. Replace `your_alchemy_api_key_here` with your actual Alchemy API key.
-3. Replace `your_wallet_private_key_here` with your wallet's private key (from MetaMask or other wallet).
+> Optional: For local development
 
-### Smart Contract Deployment
+---
 
-1. Install dependencies:
-   ```
-   npm install
-   ```
+### 2. Deploy Smart Contract
 
-2. Deploy to Sepolia testnet:
-   ```
-   npx hardhat run scripts/deploy.js --network sepolia
-   ```
+To **Sepolia testnet**:
 
-3. The deployment script will output the contract address. Update this address in:
-   - `.env` file (both CONTRACT_ADDRESS and VITE_CONTRACT_ADDRESS)
-   - `src/config/contract.ts`
+```bash
+npx hardhat run scripts/deploy.js --network sepolia
+```
 
-### Running the Frontend
+To **local Hardhat**:
 
-1. Start the development server:
-   ```
-   npm run dev
-   ```
+```bash
+npx hardhat run scripts/deploy.js --network localhost
+```
 
-2. Open your browser and connect MetaMask to the Sepolia network.
+> After deployment, update `.env` and `src/config/contract.ts` with the deployed contract address.
 
-## Features
+---
 
-- Wallet integration with MetaMask
-- Batch transaction submission
-- State verification and fraud proof mechanism
-- Balance management and withdrawal capabilities
-- Merkle tree implementation for state management
-- Optimistic rollup architecture
+### 3. Start the Backend
 
-## Tech Stack
+```bash
+cd backend
+node server.js
+```
 
-- React, TypeScript, Tailwind CSS
-- Ethers.js for blockchain interaction
-- Hardhat for contract deployment
-- Solidity for smart contracts
+> Starts the Express API server connected to your contract
 
-## License
+---
 
-MIT
+### 4. Start the Frontend
+
+Back in the root directory:
+
+```bash
+npm run dev
+```
+
+> Visit localhost and connect MetaMask to the Sepolia network or hardhat
+
+---
+
+##  License
+
+This project is licensed under the [MIT License](LICENSE).
+
+---
