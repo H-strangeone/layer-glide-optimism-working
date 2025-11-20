@@ -1,0 +1,69 @@
+name: SBOM-TM Auto Issue
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  create_issue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run SBOM Scan
+        id: scan
+        uses: h-strangeone/SBOM-TM@v0.4.73
+        with:
+          mode: scan
+          project: demo
+
+      - name: Find Scan Markdown
+        id: find_md
+        run: |
+          FILE=$(ls sbom-report/*_scan_report.md 2>/dev/null || true)
+          if [ -n "$FILE" ]; then
+            echo "path=$FILE" >> $GITHUB_OUTPUT
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or Update Security Issue
+        if: steps.find_md.outputs.found == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const path = "${{ steps.find_md.outputs.path }}";
+            const body = fs.readFileSync(path, "utf8");
+
+            const title = " SBOM-TM Security Alert";
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: "security"
+            });
+
+            const existing = issues.find(i => i.title === title);
+
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["security"]
+              });
+            }
