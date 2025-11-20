@@ -16,7 +16,7 @@ jobs:
 
       - name: Run SBOM Scan
         id: scan
-        uses: h-strangeone/SBOM-TM@v0.4.73
+        uses: h-strangeone/SBOM-TM@v0.4.74
         with:
           mode: scan
           project: demo
