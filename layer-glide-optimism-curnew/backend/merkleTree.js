@@ -19,7 +19,7 @@ class MerkleTree {
    */
   buildTree() {
     let currentLayer = this.leaves;
-
+    let xbxbx=0;
     while (currentLayer.length > 1) {
       const nextLayer = [];
 
