@@ -10,7 +10,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TableCell } from "@/components/ui/table";
+<<<<<<< HEAD
 import { displayEth } from '@/lib/format';
+=======
+
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 interface Transaction {
     id: string;
     from: string;
@@ -73,7 +77,12 @@ export default function AdminPanel() {
         };
 
         fetchBatches();
+<<<<<<< HEAD
         
+=======
+        const interval = setInterval(fetchBatches, 10000);
+        return () => clearInterval(interval);
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
     }, [isAdmin]);
 
     const handleVerifyBatch = async (batchId: string) => {
@@ -301,7 +310,27 @@ export default function AdminPanel() {
                                                                 To: {tx.to.slice(0, 6)}...{tx.to.slice(-4)}
                                                             </div>
                                                             <div>
+<<<<<<< HEAD
                                                                 {displayEth(tx.value)}
+=======
+                                                                {(() => {
+                                                                    try {
+                                                                        // Check if the value is a valid number string
+                                                                        if (tx.value && !isNaN(Number(tx.value))) {
+                                                                            // If it's a decimal string, just display it directly
+                                                                            if (tx.value.includes('.')) {
+                                                                                return `${tx.value} ETH`;
+                                                                            }
+                                                                            // Otherwise use formatEther
+                                                                            return `${formatEther(tx.value)} ETH`;
+                                                                        }
+                                                                        return '0 ETH';
+                                                                    } catch (error) {
+                                                                        console.error('Error formatting value:', error);
+                                                                        return '0 ETH';
+                                                                    }
+                                                                })()}
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
                                                             </div>
                                                             <div>
                                                                 {formatDistanceToNow(new Date(tx.timestamp * 1000), { addSuffix: true })}

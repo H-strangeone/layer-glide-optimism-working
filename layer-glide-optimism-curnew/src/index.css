@@ -1,9 +1,13 @@
+<<<<<<< HEAD
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Barlow+Condensed:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,700;1,800;1,900&family=Barlow:wght@400;500;600;700&display=swap');
+=======
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+<<<<<<< HEAD
 /* ═══════════════════════════════════════
    DESIGN TOKENS
 ═══════════════════════════════════════ */
@@ -65,10 +69,48 @@
     overflow-x: hidden;
   }
 
+=======
+@layer base {
+  :root {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 258 59% 74%;
+    --primary-foreground: 240 5.9% 10%;
+
+    --secondary: 217 91% 60%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
   * {
     @apply border-border;
   }
 
+<<<<<<< HEAD
   h1, h2, h3, h4, h5 {
     font-family: 'Barlow Condensed', sans-serif;
     letter-spacing: -0.01em;
@@ -531,3 +573,27 @@
   background-size: 200% 100%;
   animation: shimmer 2.4s ease infinite;
 }
+=======
+  body {
+    @apply bg-l2-bg text-foreground antialiased;
+  }
+}
+
+@layer utilities {
+  .glass-card {
+    @apply bg-l2-card/70 backdrop-blur-md border border-white/10 shadow-lg;
+  }
+  
+  .glow {
+    @apply relative;
+  }
+  
+  .glow::after {
+    @apply content-[''] absolute inset-0 -z-10 bg-gradient-to-r from-l2-primary/20 to-l2-secondary/20 blur-xl opacity-30 rounded-lg;
+  }
+  
+  .card-gradient {
+    @apply bg-gradient-to-br from-black/40 to-l2-card/80 backdrop-blur-lg;
+  }
+}
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d

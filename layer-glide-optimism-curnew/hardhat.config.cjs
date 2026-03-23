@@ -1,6 +1,10 @@
 require("@nomicfoundation/hardhat-toolbox");
 const path = require('path');
+<<<<<<< HEAD
 require('dotenv').config(); // loads root .env
+=======
+
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 // Get environment variables for API keys and private keys
 // If running on local machine, you need to:
 // 1. Create a .env file in the project root

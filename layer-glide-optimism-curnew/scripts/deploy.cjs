@@ -63,7 +63,11 @@ async function main() {
 
   // Deploy the contract
   const Layer2Scaling = await hre.ethers.getContractFactory("Layer2Scaling");
+<<<<<<< HEAD
   const layer2Scaling = await Layer2Scaling.deploy(300);
+=======
+  const layer2Scaling = await Layer2Scaling.deploy();
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 
   await layer2Scaling.waitForDeployment();
 

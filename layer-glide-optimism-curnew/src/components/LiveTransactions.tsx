@@ -56,7 +56,13 @@ export default function LiveTransactions() {
         fetchTransactions();
 
         // Set up polling to refresh transactions every 10 seconds
+<<<<<<< HEAD
         
+=======
+        const interval = setInterval(fetchTransactions, 10000);
+
+        return () => clearInterval(interval);
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
     }, []);
 
     return (

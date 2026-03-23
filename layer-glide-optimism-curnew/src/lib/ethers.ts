@@ -11,10 +11,17 @@ const CONTRACT_ABI = [
   "function withdrawFunds(uint256 _amount)",
   "function executeL2Transaction(address _recipient, uint256 _amount)",
   "function executeL2BatchTransaction(address[] _recipients, uint256[] _amounts)",
+<<<<<<< HEAD
   "function submitBatch(bytes32 _transactionsRoot, uint256 _txCount)",
   "function verifyBatch(uint256 _batchId)",
   "function finalizeBatch(uint256 _batchId)",
   "function reportFraud(uint256 batchId, bytes32 fraudProofHash, bytes32[] calldata merkleProof)",
+=======
+  "function submitBatch(bytes32[] _transactionsRoots)",
+  "function verifyBatch(uint256 _batchId)",
+  "function finalizeBatch(uint256 _batchId)",
+  "function reportFraud(uint256 _batchId, bytes32 _fraudProof, tuple(address sender, address recipient, uint256 amount) _tx, bytes32[] _merkleProof)",
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
   "function balances(address) view returns (uint256)",
   "function admin() view returns (address)",
   "function isOperator(address) view returns (bool)",
@@ -34,10 +41,14 @@ const CONTRACT_ABI = [
   "event OperatorRemoved(address indexed operator)",
   "event FundsDeposited(address indexed user, uint256 amount)",
   "event FundsWithdrawn(address indexed user, uint256 amount)",
+<<<<<<< HEAD
   "event FraudPenaltyApplied(address indexed user, uint256 penalty)",
   "event BatchRejected(uint256 indexed batchId, address challenger)",
 "event OperatorSlashed(address indexed operator, uint256 amount, address challenger)",
 "event OperatorBonded(address indexed operator, uint256 amount)",
+=======
+  "event FraudPenaltyApplied(address indexed user, uint256 penalty)"
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 ];
 
 // Network settings
@@ -464,14 +475,34 @@ export const finalizeBatch = async (batchId: number) => {
 
 // Report fraud with Merkle proof
 export const reportFraudWithMerkleProof = async (
+<<<<<<< HEAD
   batchId: string,
   fraudProof: string,
+=======
+  batchId: number,
+  fraudProof: string,
+  transaction: { sender: string, recipient: string, amount: string },
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
   merkleProof: string[]
 ) => {
   try {
     const contract = await getContract();
 
+<<<<<<< HEAD
     const tx = await contract.reportFraud(batchId, fraudProof, merkleProof);
+=======
+    // Convert amount to wei
+    const amountInWei = parseEther(transaction.amount);
+
+    // Create the transaction object
+    const txObj = {
+      sender: transaction.sender,
+      recipient: transaction.recipient,
+      amount: amountInWei
+    };
+
+    const tx = await contract.reportFraud(batchId, fraudProof, txObj, merkleProof);
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
     await tx.wait();
     toast({
       title: "Success",
@@ -872,7 +903,14 @@ export const isAdmin = async (address: string): Promise<boolean> => {
       console.warn("admin() check failed:", error);
 
       // For development, allow hardcoded admin address
+<<<<<<< HEAD
       
+=======
+      if (process.env.NODE_ENV === 'development') {
+        const hardcodedAdmin = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+        return address.toLowerCase() === hardcodedAdmin.toLowerCase();
+      }
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
       return false;
     }
   } catch (error) {

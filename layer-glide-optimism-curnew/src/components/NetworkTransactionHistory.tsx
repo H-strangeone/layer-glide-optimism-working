@@ -6,7 +6,11 @@ import { useToast } from "@/components/ui/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { formatEther } from "ethers";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+<<<<<<< HEAD
 import { displayEth } from '@/lib/format';
+=======
+
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 // Define interfaces
 interface Transaction {
     hash: string;
@@ -72,7 +76,13 @@ export function NetworkTransactionHistory() {
         fetchNetworkData();
 
         // Set up polling to refresh data every 10 seconds
+<<<<<<< HEAD
         
+=======
+        const intervalId = setInterval(fetchNetworkData, 10000);
+
+        return () => clearInterval(intervalId);
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
     }, []);
 
     const getStatusBadge = (status: string) => {
@@ -163,7 +173,11 @@ export function NetworkTransactionHistory() {
                                                 <TableCell className="font-mono text-xs">
                                                     {tx.to.substring(0, 6)}...{tx.to.substring(tx.to.length - 4)}
                                                 </TableCell>
+<<<<<<< HEAD
                                                 <TableCell>{displayEth(tx.value)}</TableCell>
+=======
+                                                <TableCell>{formatEther(tx.value)} ETH</TableCell>
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
                                                 <TableCell>{getStatusBadge(tx.status)}</TableCell>
                                                 <TableCell>
                                                     {tx.batchId ? (

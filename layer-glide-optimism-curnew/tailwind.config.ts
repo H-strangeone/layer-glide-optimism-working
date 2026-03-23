@@ -64,6 +64,7 @@ export default {
 					ring: 'hsl(var(--sidebar-ring))'
 				},
 				l2: {
+<<<<<<< HEAD
 					bg: '#0d0d0d',
 					card: '#181818',
 					primary: '#e8631a',
@@ -84,6 +85,16 @@ export default {
 					subtle:  '#2e2b28',
 				}
 
+=======
+					bg: '#121212',
+					card: '#1a1a2e',
+					primary: '#9b87f5',
+					secondary: '#3a86ff',
+					success: '#4CAF50',
+					warning: '#FF9800',
+					error: '#F44336'
+				}
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 			},
 			borderRadius: {
 				lg: 'var(--radius)',

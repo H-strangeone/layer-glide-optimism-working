@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { useEffect, useRef } from 'react';
 import { BatchManager } from '@/components/BatchManager';
 import gsap from 'gsap';
@@ -98,3 +99,14 @@ export default function BatchesPage() {
     </div>
   );
 }
+=======
+import { BatchManager } from '@/components/BatchManager';
+
+export default function BatchesPage() {
+    return (
+        <div className="min-h-screen bg-background">
+            <BatchManager />
+        </div>
+    );
+} 
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d

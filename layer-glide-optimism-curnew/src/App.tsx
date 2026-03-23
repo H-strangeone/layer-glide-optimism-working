@@ -1,7 +1,13 @@
+<<<<<<< HEAD
 import React, { useEffect, useRef } from 'react';
 import { useRealtimeUpdates } from './hooks/useRealtimeUpdates';
 import { WagmiConfig } from 'wagmi';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+=======
+import React from 'react';
+import { WagmiConfig } from 'wagmi';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
@@ -15,6 +21,7 @@ import Batches from './pages/batches';
 import FraudProofPage from './pages/fraud-proof';
 import NotFound from './pages/NotFound';
 import { config } from './lib/wagmi';
+<<<<<<< HEAD
 import gsap from 'gsap';
 import { useWallet } from './hooks/useWallet';
 
@@ -93,15 +100,36 @@ function AppContent() {
   );
 }
 
+=======
+
+const queryClient = new QueryClient();
+
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <WagmiConfig config={config}>
           <Router>
+<<<<<<< HEAD
             <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
               <Cursor />
               <AppContent />
+=======
+            <div className="min-h-screen bg-l2-bg">
+              <Navbar />
+              <main className="container mx-auto px-4 py-8">
+                <Routes>
+                  <Route path="/" element={<Index />} />
+                  <Route path="/transactions" element={<Transactions />} />
+                  <Route path="/batches" element={<Batches />} />
+                  <Route path="/withdraw" element={<Withdraw />} />
+                  <Route path="/admin" element={<Admin />} />
+                  <Route path="/fraud-proof" element={<FraudProofPage />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </main>
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
             </div>
           </Router>
         </WagmiConfig>

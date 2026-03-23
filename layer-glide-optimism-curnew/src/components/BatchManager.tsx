@@ -9,6 +9,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { formatDistanceToNow } from "date-fns";
 import { Loader2, Package, ChevronDown, ChevronUp } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+<<<<<<< HEAD
 import { displayEth, formatAddress } from '@/lib/format';
 interface Transaction {
   id:          string;
@@ -18,6 +19,17 @@ interface Transaction {
   status:      string;
   batchId:     string | null;
   createdAt:   string;
+=======
+
+interface Transaction {
+    id: string;
+    from: string;
+    to: string;
+    value: string;
+    status: string;
+    batchId: string | null;
+    createdAt: string;
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 }
 
 interface Batch {
@@ -38,7 +50,27 @@ interface Batch {
 interface BatchManagerProps {
     address?: string;
 }
+<<<<<<< HEAD
 // Update the formatTransactionValue function to handle floating-point numbers
+=======
+
+const formatAddress = (address: string) => {
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+};
+
+// Update the formatTransactionValue function to handle floating-point numbers
+const formatTransactionValue = (value: string) => {
+    try {
+        // Convert to BigInt after scaling if the value is a floating-point number
+        const scaledValue = BigInt(Math.floor(parseFloat(value) * 1e18));
+        return formatEther(scaledValue);
+    } catch {
+        console.error(`Invalid transaction value: ${value}`);
+        return 'Invalid';
+    }
+};
+
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
 export function BatchManager({ address }: BatchManagerProps) {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -104,6 +136,11 @@ export function BatchManager({ address }: BatchManagerProps) {
 
     useEffect(() => {
         fetchBatches();
+<<<<<<< HEAD
+=======
+        const interval = setInterval(fetchBatches, 5000);
+        return () => clearInterval(interval);
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
     }, [address]);
 
     const createBatch = async () => {
@@ -355,6 +392,7 @@ export function BatchManager({ address }: BatchManagerProps) {
                                                     {batch.transactions.map((tx) => (
                                                         <TableRow key={tx.id} className="border-white/10 hover:bg-white/5">
                                                             <TableCell className="font-mono text-sm text-white/80">
+<<<<<<< HEAD
                                                                 {formatAddress(tx.fromAddress)}
                                                             </TableCell>
                                                             <TableCell className="font-mono text-sm text-white/80">
@@ -362,6 +400,15 @@ export function BatchManager({ address }: BatchManagerProps) {
                                                             </TableCell>
                                                             <TableCell className="text-white/90">
                                                                 {displayEth(tx.valueWei)} ETH
+=======
+                                                                {formatAddress(tx.from)}
+                                                            </TableCell>
+                                                            <TableCell className="font-mono text-sm text-white/80">
+                                                                {formatAddress(tx.to)}
+                                                            </TableCell>
+                                                            <TableCell className="text-white/90">
+                                                                {formatTransactionValue(tx.value)} ETH
+>>>>>>> 5727fd269cc713f4edd3f15e203d610b874b468d
                                                             </TableCell>
                                                             <TableCell>
                                                                 {getStatusBadge(tx.status)}
