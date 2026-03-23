@@ -1,0 +1,2 @@
+// Contract address from environment variable or default to local development address
+export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS || '0x5FbDB2315678afecb367f032d93F642f64180aa3'; 
