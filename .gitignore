@@ -28,3 +28,10 @@ cache
 .env*.local
 backend/.env
 migrations
+package-lock
+dev.db
+prisma/prisma
+artifacts
+.vscode
+.gitignore
+public
