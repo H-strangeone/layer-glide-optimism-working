@@ -41,10 +41,17 @@ export default function Transactions() {
   }, [hasSearched]);
 
   const fetchData = async (addr: string) => {
-    const r = await fetch(`http://localhost:5500/api/transactions/user/${addr}`);
-    if (!r.ok) throw new Error(r.statusText);
-    const { transactions: txs, balance: bal } = await r.json();
-    setBalance(bal || '0');
+    // ✅ Fetch transactions
+const txRes = await fetch(`http://localhost:5500/api/transactions/user/${addr}`);
+if (!txRes.ok) throw new Error(txRes.statusText);
+const { transactions: txs } = await txRes.json();
+
+// ✅ Fetch correct balance (SOURCE OF TRUTH)
+const balRes = await fetch(`http://localhost:5500/api/balance/${addr}`);
+if (!balRes.ok) throw new Error(balRes.statusText);
+const balData = await balRes.json();
+
+setBalance(balData.layer2Balance || '0');
 
     let sent = BigInt(0), received = BigInt(0);
     const batchSet = new Set<string>();

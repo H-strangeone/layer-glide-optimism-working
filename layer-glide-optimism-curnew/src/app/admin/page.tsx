@@ -71,7 +71,7 @@ export default function AdminPage() {
     const fetchBatches = async () => {
         try {
             setLoading(true);
-            const response = await fetch("http://localhost:5500/api/batches", {
+            const response = ://localhost:5500/api/batches", {
                 headers: {
                     "x-admin-address": address || "",
                 }
@@ -103,7 +103,7 @@ export default function AdminPage() {
 
         try {
             setLoading(true);
-            const response = await fetch("http://localhost:5500/api/batches/verify", {
+            const response = ://localhost:5500/api/batches/verify", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -157,7 +157,7 @@ export default function AdminPage() {
 
         try {
             setLoading(true);
-            const response = await fetch("http://localhost:5500/api/batches/reject", {
+            const response = ://localhost:5500/api/batches/reject", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
