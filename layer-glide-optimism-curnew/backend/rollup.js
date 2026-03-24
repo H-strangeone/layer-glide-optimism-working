@@ -42,7 +42,7 @@ export async function createBatch() {
             ethers.utils.keccak256(
                 ethers.utils.defaultAbiCoder.encode(
                     ['address', 'address', 'uint256'],
-                    [tx.from, tx.to, tx.value]
+                    [tx.fromAddress, tx.toAddress, tx.value]
                 )
             )
         );

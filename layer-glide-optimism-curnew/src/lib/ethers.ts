@@ -319,22 +319,34 @@ export const executeL2Transaction = async (recipient: string, amount: string) =>
   const signer = await provider.getSigner();
   const from = await signer.getAddress();
   const nonce = await getNonce(from);
-  const response = await fetch(
-    `${import.meta.env.VITE_API_URL || 'http://localhost:5500'}/api/transactions`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      
-      body: JSON.stringify({
-        transactions: [{
-          from,
-          to: recipient,
-          value: amount,
-          nonce
-        }]
-      })
-    }
-  );
+  const valueWei = ethers.parseEther(amount);
+  //  create message hash
+const messageHash = ethers.solidityPackedKeccak256(
+  ["address", "address", "uint256", "uint256"],
+  [from, recipient, valueWei, nonce]
+);
+
+//  sign message
+const signature = await signer.signMessage(
+  ethers.getBytes(messageHash)
+);
+
+const response = await fetch(
+  `${import.meta.env.VITE_API_URL || 'http://localhost:5500'}/api/transactions`,
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      transactions: [{
+        from,
+        to: recipient,
+        valueWei: valueWei.toString(),
+        nonce,
+        signature   // ✅ NEW
+      }]
+    })
+  }
+);
 
   if (!response.ok) {
     const err = await response.json();
