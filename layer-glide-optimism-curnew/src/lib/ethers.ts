@@ -110,12 +110,7 @@ interface Batch {
 }
 
 // Initialize provider and contract
-const getProvider = async () => {
-  if (!window.ethereum) {
-    throw new Error("MetaMask is not installed");
-  }
-  return new BrowserProvider(window.ethereum);
-};
+
 
 // Get contract instance
 export const getContract = async () => {
@@ -178,6 +173,7 @@ export const getTransactionHistory = async (address: string): Promise<Transactio
 
       // Get all TransactionExecuted events for this address
       const filter = contract.filters.TransactionExecuted(address);
+      await ensureCorrectNetwork();
       const events = await contract.queryFilter(filter);
 
       // Convert events to TransactionHistory format
@@ -271,6 +267,7 @@ export const subscribeToTransactionEvents = async (callback: (event: Transaction
 export const depositFunds = async (amount: string) => {
   try {
     const contract = await getContract();
+    await ensureCorrectNetwork();
     const tx = await contract.depositFunds({
       value: parseEther(amount)
     });
@@ -295,6 +292,7 @@ export const depositFunds = async (amount: string) => {
 export const withdrawFunds = async (amount: string) => {
   try {
     const contract = await getContract();
+    await ensureCorrectNetwork();
     const tx = await contract.withdrawFunds(
       parseEther(amount)
     );
@@ -317,53 +315,78 @@ export const withdrawFunds = async (amount: string) => {
 
 // Execute a single Layer 2 transaction
 export const executeL2Transaction = async (recipient: string, amount: string) => {
-  try {
-    const contract = await getContract();
-    const tx = await contract.executeL2Transaction(
-      recipient,
-      parseEther(amount)
-    );
-    await tx.wait();
-    toast({
-      title: "Success",
-      description: "Transaction executed successfully",
-    });
-    return tx;
-  } catch (error) {
-    console.error("Error executing transaction:", error);
-    toast({
-      title: "Error",
-      description: "Failed to execute transaction",
-      variant: "destructive",
-    });
-    throw error;
-  }
-};
+  const provider = await getProvider();
+  const signer = await provider.getSigner();
+  const from = await signer.getAddress();
 
+  const response = await fetch(
+    `${import.meta.env.VITE_API_URL || 'http://localhost:5500'}/api/transactions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transactions: [{
+          from,
+          to: recipient,
+          amount,
+        }]
+      })
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || 'Transfer failed');
+  }
+
+  const result = await response.json();
+
+  return {
+  hash: result.id || '0x0000',
+  status: 1,
+  wait: async () => ({
+    status: 1,
+    transactionHash: result.id || '0x0000',
+  }),
+};
+};
 // Execute a batch of Layer 2 transactions
 export const executeL2BatchTransaction = async (recipients: string[], amounts: string[]) => {
-  try {
-    const contract = await getContract();
-    const weiAmounts = amounts.map(amount => parseEther(amount));
-    const tx = await contract.executeL2BatchTransaction(
-      recipients,
-      weiAmounts
-    );
-    await tx.wait();
-    toast({
-      title: "Success",
-      description: "Batch transaction executed successfully",
-    });
-    return tx;
-  } catch (error) {
-    console.error("Error executing batch transaction:", error);
-    toast({
-      title: "Error",
-      description: "Failed to execute batch transaction",
-      variant: "destructive",
-    });
-    throw error;
+  if (recipients.length !== amounts.length) {
+    throw new Error('Recipients and amounts arrays must be the same length');
   }
+
+  // Get current signer address
+  const provider = await getProvider();
+  const signer = await provider.getSigner();
+  const from = await signer.getAddress();
+
+  const transactions = recipients.map((to, i) => ({
+    from,
+    to,
+    amount: amounts[i],
+  }));
+
+  const response = await fetch(
+    `${import.meta.env.VITE_API_URL || 'http://localhost:5500'}/api/transactions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactions })
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || 'Batch transfer failed');
+  }
+
+  const result = await response.json();
+
+  return {
+    hash: result.id || '0x0000',
+    wait: async () => ({ status: 1 }),
+  };
 };
 
 // Alias for executeL2BatchTransaction for backward compatibility
@@ -388,6 +411,7 @@ export const submitBatchWithMerkleRoot = async (merkleRoot: string) => {
     console.log('Next batch ID:', nextBatchId.toString());
 
     // Submit the batch with the current batch ID
+    await ensureCorrectNetwork();
     const tx = await contract.submitBatch([merkleRoot]);
     await tx.wait();
 
@@ -421,6 +445,7 @@ export const verifyBatch = async (batchId: bigint | number | string) => {
     console.log(`Verifying batch with ID: ${numericBatchId}`);
 
     // Verify the batch on-chain
+    await ensureCorrectNetwork();
     const tx = await contract.verifyBatch(numericBatchId);
     await tx.wait();
 
@@ -444,6 +469,7 @@ export const verifyBatch = async (batchId: bigint | number | string) => {
 export const finalizeBatch = async (batchId: number) => {
   try {
     const contract = await getContract();
+    await ensureCorrectNetwork();
     const tx = await contract.finalizeBatch(batchId);
     await tx.wait();
     toast({
@@ -461,7 +487,13 @@ export const finalizeBatch = async (batchId: number) => {
     throw error;
   }
 };
+export const getProvider = async () => {
+  if (!window.ethereum) {
+    throw new Error("MetaMask not found");
+  }
 
+  return new ethers.BrowserProvider(window.ethereum);
+};
 // Report fraud with Merkle proof
 export const reportFraudWithMerkleProof = async (
   batchId: string,
@@ -470,7 +502,7 @@ export const reportFraudWithMerkleProof = async (
 ) => {
   try {
     const contract = await getContract();
-
+    await ensureCorrectNetwork();
     const tx = await contract.reportFraud(batchId, fraudProof, merkleProof);
     await tx.wait();
     toast({
@@ -488,66 +520,37 @@ export const reportFraudWithMerkleProof = async (
     throw error;
   }
 };
+export const ensureCorrectNetwork = async () => {
+  if (!window.ethereum) return;
 
+  const chainId = await window.ethereum.request({
+    method: "eth_chainId"
+  });
+
+  if (chainId !== "0x539") {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0x539" }]
+    });
+  }
+};
 // Get Layer 1 balance
 export const getLayer1Balance = async (address: string): Promise<string> => {
   try {
-    // First try to get balance from the blockchain
-    try {
-      const provider = await getProvider();
-      const balance = await provider.getBalance(address);
-      return formatEther(balance);
-    } catch (error) {
-      console.error("Error getting Layer 1 balance from blockchain:", error);
-
-      // If blockchain fails, try to get from the API
-      try {
-        const response = await fetch(`http://localhost:5500/api/balance/${address}`);
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        return data.layer1Balance || "0";
-      } catch (apiError) {
-        console.error("Error getting Layer 1 balance from API:", apiError);
-        return "0";
-      }
-    }
+    const provider = await getProvider();
+    const balance = await provider.getBalance(address);
+    return formatEther(balance);
   } catch (error) {
-    console.error("Error fetching Layer 1 balance:", error);
-    return "0";
+    console.error('Error getting Layer 1 balance:', error);
+    return '0';
   }
 };
 
 // Get Layer 2 balance
-export const getLayer2Balance = async (address: string): Promise<string> => {
-  try {
-    // Try to get from the API first
-    try {
-      const response = await fetch(`http://localhost:5500/api/balance/${address}`);
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      const data = await response.json();
-      return data.layer2Balance || "0";
-    } catch (apiError) {
-      console.error("Error getting Layer 2 balance from API:", apiError);
-
-      // If API fails, try to get from the blockchain
-      try {
-        const contract = await getContract();
-        const balance = await contract.balances(address);
-        return formatEther(balance);
-      } catch (blockchainError) {
-        console.error("Error getting Layer 2 balance from blockchain:", blockchainError);
-        return "0"; // Return 0 as a fallback
-      }
-    }
-  } catch (error) {
-    console.error("Error in getLayer2Balance:", error);
-    return "0"; // Return 0 as a fallback
-  }
+export const getLayer2Balance = async (address: string) => {
+  const res = await fetch(`http://localhost:5500/api/balance/${address}`);
+  const data = await res.json();
+  return data.layer2Balance;
 };
 
 // Format large numbers without scientific notation
@@ -891,6 +894,7 @@ export const isAdmin = async (address: string): Promise<boolean> => {
 export const addOperator = async (operatorAddress: string) => {
   try {
     const contract = await getContract();
+    await ensureCorrectNetwork();
     const tx = await contract.addOperator(operatorAddress);
     await tx.wait();
   } catch (error) {
@@ -903,6 +907,7 @@ export const addOperator = async (operatorAddress: string) => {
 export const removeOperator = async (operatorAddress: string) => {
   try {
     const contract = await getContract();
+    await ensureCorrectNetwork();
     const tx = await contract.removeOperator(operatorAddress);
     await tx.wait();
   } catch (error) {
@@ -915,6 +920,7 @@ export const removeOperator = async (operatorAddress: string) => {
 export const isOperator = async (address: string): Promise<boolean> => {
   try {
     const contract = await getContract();
+    await ensureCorrectNetwork();
     return await contract.isOperator(address);
   } catch (error) {
     console.error("Error checking operator status:", error);
@@ -932,6 +938,7 @@ export async function getBatchTransactions(batchId: string) {
 
     // Get batch events
     const filter = contract.filters.TransactionExecuted();
+    await ensureCorrectNetwork();
     const events = await contract.queryFilter(filter) as TransactionExecutedLog[];
 
     // Filter events for the specific batch

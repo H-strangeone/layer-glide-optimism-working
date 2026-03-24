@@ -1924,7 +1924,27 @@ async function initBlockchain() {
     return false;
   }
 }
-
+async function syncAllBalances() {
+  if (!contract) return;
+  try {
+    const balances = await prisma.layer2Balance.findMany();
+    for (const record of balances) {
+      const onChain = await contract.balances(record.userAddress);
+      await prisma.layer2Balance.update({
+        where: {
+          userAddress_contractAddress: {
+            userAddress: record.userAddress,
+            contractAddress: record.contractAddress
+          }
+        },
+        data: { balanceWei: onChain.toString() }
+      });
+    }
+    console.log('✅ Balances synced from chain');
+  } catch (err) {
+    console.error('Balance sync error:', err.message);
+  }
+}
 // ─── Contract Event Listeners ─────────────────────────────────────────────────
 // FIX: These keep the DB authoritative. Previously the DB had no idea what
 // the contract was doing — status never updated unless admin manually clicked.
@@ -1935,9 +1955,12 @@ function setupContractEventListeners() {
     try {
       const onChainId = batchId.toString();
       await prisma.batch.updateMany({
-        where: { onChainId },
-        data: { status: 'finalized' }
-      });
+  where: {
+    id: batch.id,
+    onChainId: null // only update if not already set
+  },
+  data: { onChainId }
+});
       await prisma.pendingTransaction.updateMany({
         where: { batch: { onChainId } },
         data: { status: 'finalized' }
@@ -1953,9 +1976,12 @@ function setupContractEventListeners() {
     try {
       const onChainId = batchId.toString();
       await prisma.batch.updateMany({
-        where: { onChainId },
-        data: { status: 'rejected' }
-      });
+  where: {
+    id: batch.id,
+    onChainId: null // only update if not already set
+  },
+  data: { onChainId }
+});
       await prisma.pendingTransaction.updateMany({
         where: { batch: { onChainId } },
         data: { status: 'rejected' }
@@ -2717,6 +2743,7 @@ setInterval(async () => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 initBlockchain().then(() => {
+  syncAllBalances();
   startSequencer({ contract, wallet, broadcast });
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);

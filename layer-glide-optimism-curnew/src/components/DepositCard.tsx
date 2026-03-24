@@ -17,26 +17,27 @@ export default function DepositCard({ onSuccess }: DepositCardProps) {
   const [layer1Balance, setLayer1Balance] = useState("0");
   const [layer2Balance, setLayer2Balance] = useState("0");
 
-  useEffect(() => {
-    const fetchBalances = async () => {
-      if (!isConnected || !address) return;
+useEffect(() => {
+  const fetchBalances = async () => {
+    if (!isConnected || !address) return;
 
-      try {
-        const l1Balance = await getLayer1Balance(address);
-        const l2Balance = await getLayer2Balance(address);
-        setLayer1Balance(l1Balance || "0");
-        setLayer2Balance(l2Balance || "0");
-      } catch (error) {
-        console.error("Error fetching balances:", error);
-        setLayer1Balance("0");
-        setLayer2Balance("0");
-      }
-    };
+    try {
+      const l1Balance = await getLayer1Balance(address);
+      const l2Balance = await getLayer2Balance(address);
 
-    fetchBalances();
-    const interval = setInterval(fetchBalances, 10000);
-    return () => clearInterval(interval);
-  }, [address, isConnected]);
+      setLayer1Balance(l1Balance || "0");
+      setLayer2Balance(l2Balance || "0");
+    } catch (error) {
+      console.error("Error fetching balances:", error);
+      setLayer1Balance("0");
+      setLayer2Balance("0");
+    }
+  };
+
+  fetchBalances();
+  const interval = setInterval(fetchBalances, 10000);
+  return () => clearInterval(interval);
+}, [address, isConnected]);
 
   const handleDeposit = async () => {
     if (!amount) {
