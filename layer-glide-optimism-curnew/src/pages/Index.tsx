@@ -66,23 +66,12 @@ export default function Index() {
     }
   }, [activeAction]);
 
-  const handleSuccess = async (transaction: any) => {
-    try {
-      const payload = {
-        transactions: Array.isArray(transaction)
-          ? transaction.map(tx => ({ from: tx.from.toLowerCase(), to: tx.to.toLowerCase(), amount: tx.value?.toString() || tx.amount?.toString(), status: 'pending' }))
-          : [{ from: transaction.from.toLowerCase(), to: transaction.to.toLowerCase(), amount: transaction.value.toString(), status: 'pending' }]
-      };
-      const r = await fetch('http://localhost:5500/api/transactions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      setRefreshTrigger(p => p + 1);
-      toast({ title: 'Success', description: 'Transaction submitted' });
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message || 'Failed', variant: 'destructive' });
-    }
-  };
+  const handleSuccess = (transaction) => {
+  console.log("Deposit successful:", transaction);
+
+  // ❌ DO NOTHING ELSE
+  // ❌ DO NOT call /api/transactions
+};
 
   if (!isConnected) {
     return (

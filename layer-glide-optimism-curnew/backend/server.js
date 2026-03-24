@@ -1789,7 +1789,7 @@ import { WebSocketServer } from 'ws';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-
+import { startSequencer } from './sequencer.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 dotenv.config({ path: join(__dirname, '.env') });
@@ -1935,9 +1935,13 @@ function setupContractEventListeners() {
     try {
       const onChainId = batchId.toString();
       await prisma.batch.updateMany({
-        where: { onChainId },
-        data: { status: 'finalized' }
-      });
+  where: {
+    onChainId: onChainId
+  },
+  data: {
+    status: 'finalized'
+  }
+});
       await prisma.pendingTransaction.updateMany({
         where: { batch: { onChainId } },
         data: { status: 'finalized' }
@@ -1953,9 +1957,13 @@ function setupContractEventListeners() {
     try {
       const onChainId = batchId.toString();
       await prisma.batch.updateMany({
-        where: { onChainId },
-        data: { status: 'rejected' }
-      });
+  where: {
+    onChainId: onChainId
+  },
+  data: {
+    status: 'rejected'
+  }
+});
       await prisma.pendingTransaction.updateMany({
         where: { batch: { onChainId } },
         data: { status: 'rejected' }
@@ -1968,51 +1976,80 @@ function setupContractEventListeners() {
   });
 
   contract.on('FundsDeposited', async (user, amount) => {
-    try {
-      // Always sync balance from chain — source of truth
-      const onChainBal = await contract.balances(user);
-      await prisma.layer2Balance.upsert({
-        where: {
-          userAddress_contractAddress: {
-            userAddress: user.toLowerCase(),
-            contractAddress: CONTRACT_ADDRESS.toLowerCase()
-          }
-        },
-        create: {
+  try {
+    const existing = await prisma.layer2Balance.findUnique({
+      where: {
+        userAddress_contractAddress: {
           userAddress: user.toLowerCase(),
-          contractAddress: CONTRACT_ADDRESS.toLowerCase(),
-          balanceWei: onChainBal.toString()
-        },
-        update: { balanceWei: onChainBal.toString() }
-      });
-      broadcast('balance_updated', { address: user.toLowerCase() });
-    } catch (err) {
-      console.error('FundsDeposited handler error:', err.message);
-    }
-  });
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      }
+    });
 
-  contract.on('FundsWithdrawn', async (user) => {
-    try {
-      const onChainBal = await contract.balances(user);
-      await prisma.layer2Balance.upsert({
-        where: {
-          userAddress_contractAddress: {
-            userAddress: user.toLowerCase(),
-            contractAddress: CONTRACT_ADDRESS.toLowerCase()
-          }
-        },
-        create: {
+    const current = existing ? BigInt(existing.balanceWei) : 0n;
+    const updated = current + BigInt(amount.toString());
+
+    await prisma.layer2Balance.upsert({
+      where: {
+        userAddress_contractAddress: {
           userAddress: user.toLowerCase(),
-          contractAddress: CONTRACT_ADDRESS.toLowerCase(),
-          balanceWei: onChainBal.toString()
-        },
-        update: { balanceWei: onChainBal.toString() }
-      });
-      broadcast('balance_updated', { address: user.toLowerCase() });
-    } catch (err) {
-      console.error('FundsWithdrawn handler error:', err.message);
-    }
-  });
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      },
+      create: {
+        userAddress: user.toLowerCase(),
+        contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+        balanceWei: updated.toString()
+      },
+      update: {
+        balanceWei: updated.toString()
+      }
+    });
+
+    broadcast('balance_updated', { address: user.toLowerCase() });
+
+  } catch (err) {
+    console.error('FundsDeposited handler error:', err.message);
+  }
+});
+
+  contract.on('FundsWithdrawn', async (user, amount) => {
+  try {
+    const existing = await prisma.layer2Balance.findUnique({
+      where: {
+        userAddress_contractAddress: {
+          userAddress: user.toLowerCase(),
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      }
+    });
+
+    const current = existing ? BigInt(existing.balanceWei) : 0n;
+    const updated = current - BigInt(amount.toString());
+
+    await prisma.layer2Balance.upsert({
+      where: {
+        userAddress_contractAddress: {
+          userAddress: user.toLowerCase(),
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      },
+      create: {
+        userAddress: user.toLowerCase(),
+        contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+        balanceWei: "0"
+      },
+      update: {
+        balanceWei: updated.toString()
+      }
+    });
+
+    broadcast('balance_updated', { address: user.toLowerCase() });
+
+  } catch (err) {
+    console.error('FundsWithdrawn handler error:', err.message);
+  }
+});
 
   console.log('📡 Contract event listeners active');
 }
@@ -2144,17 +2181,20 @@ app.get('/api/batches/:id', async (req, res) => {
 app.post('/api/transactions', async (req, res) => {
   try {
     const { transactions } = req.body;
+
     if (!Array.isArray(transactions) || transactions.length === 0) {
       return res.status(400).json({ error: 'transactions array required' });
     }
 
-    // FIX 1: Normalize ALL values to wei first
+    // ✅ Normalize
     const normalized = transactions.map(tx => ({
       fromAddress: (tx.from || tx.fromAddress || '').toLowerCase(),
       toAddress:   (tx.to   || tx.toAddress   || '').toLowerCase(),
       valueWei:    normalizeToWei(tx.amount || tx.value || tx.valueWei || '0'),
+      nonce:       tx.nonce
     }));
 
+    // ✅ Validate addresses
     for (const tx of normalized) {
       if (!ethers.utils.isAddress(tx.fromAddress)) {
         return res.status(400).json({ error: `Invalid from address: ${tx.fromAddress}` });
@@ -2163,97 +2203,170 @@ app.post('/api/transactions', async (req, res) => {
         return res.status(400).json({ error: `Invalid to address: ${tx.toAddress}` });
       }
     }
+    // 🔥 NONCE VALIDATION
+for (const tx of normalized) {
 
-    // FIX 2: Build Merkle root from normalized wei values
-    const leaves = normalized.map(tx =>
-      ethers.utils.keccak256(
-        ethers.utils.defaultAbiCoder.encode(
-          ['address', 'address', 'uint256'],
-          [tx.fromAddress, tx.toAddress, ethers.BigNumber.from(tx.valueWei)]
-        )
-      )
-    );
-
-    let root = ethers.constants.HashZero;
-    if (leaves.length > 0) {
-      let layer = [...leaves];
-      while (layer.length > 1) {
-        const next = [];
-        for (let i = 0; i < layer.length; i += 2) {
-          const left  = layer[i];
-          const right = i + 1 < layer.length ? layer[i + 1] : layer[i];
-          next.push(
-            left <= right
-              ? ethers.utils.keccak256(ethers.utils.concat([left, right]))
-              : ethers.utils.keccak256(ethers.utils.concat([right, left]))
-          );
-        }
-        layer = next;
+  const nonceRecord = await prisma.nonce.findUnique({
+    where: {
+      userAddress_contractAddress: {
+        userAddress: tx.fromAddress,
+        contractAddress: CONTRACT_ADDRESS.toLowerCase()
       }
-      root = layer[0];
+    }
+  });
+
+  const expectedNonce = nonceRecord ? nonceRecord.currentNonce : 0;
+
+  if (tx.nonce === undefined) {
+    return res.status(400).json({
+      error: "Nonce required"
+    });
+  }
+
+  if (tx.nonce !== expectedNonce) {
+    return res.status(400).json({
+      error: `Invalid nonce. Expected ${expectedNonce}, got ${tx.nonce}`
+    });
+  }
+}
+    // 🔥 STEP 1: CHECK BALANCES
+    for (const tx of normalized) {
+      const balance = await prisma.layer2Balance.findUnique({
+        where: {
+          userAddress_contractAddress: {
+            userAddress: tx.fromAddress,
+            contractAddress: CONTRACT_ADDRESS.toLowerCase()
+          }
+        }
+      });
+
+      const currentBalance = balance ? BigInt(balance.balanceWei) : 0n;
+      const txValue = BigInt(tx.valueWei);
+
+      if (currentBalance < txValue) {
+        return res.status(400).json({
+          error: `Insufficient L2 balance for ${tx.fromAddress}`
+        });
+      }
     }
 
-    // FIX 3: Create batch with correct schema — no random batchId
-    const batch = await prisma.batch.create({
-      data: {
-        transactionsRoot: root,
-        status: 'pending_submission',
-        txCount: normalized.length,
-        transactions: {
-          create: normalized.map(tx => ({
-            fromAddress: tx.fromAddress,
-            toAddress:   tx.toAddress,
-            valueWei:    tx.valueWei,
-            status:      'pending',
-          }))
-        }
-      },
-      include: { transactions: true }
-    });
+    // 🔥 STEP 2: UPDATE BALANCES (OPTIMISTIC EXECUTION)
+    // 🔥 STEP 2: UPDATE BALANCES (SAFE BIGINT VERSION)
+for (const tx of normalized) {
+  const txValue = BigInt(tx.valueWei);
 
-    console.log(`Created batch in DB: ${batch.id}`);
-
-    // FIX 4: Submit to contract and capture REAL on-chain batchId from event
-    if (contract) {
-      try {
-        const tx = await contract.submitBatch(root, normalized.length);
-        const receipt = await tx.wait();
-        const event = receipt.events?.find(e => e.event === 'BatchSubmitted');
-        if (event) {
-          const onChainId      = event.args.batchId.toString();
-          const challengeEndsAt = new Date(Date.now() + CHALLENGE_PERIOD_MS);
-          await prisma.batch.update({
-            where: { id: batch.id },
-            data: {
-              onChainId,
-              status:           'challenge_period',
-              challengeEndsAt,
-              submitter:        wallet.address,
-              onChainTxHash:    receipt.transactionHash,
-            }
-          });
-          console.log(`✅ Batch on-chain. onChainId=${onChainId}`);
-          broadcast('batch_created', { id: batch.id, onChainId, txCount: normalized.length });
-        }
-      } catch (err) {
-        console.error('submitBatch failed:', err.message);
-        // Batch stays as pending_submission — not fatal
+  const existingFrom = await prisma.layer2Balance.findUnique({
+    where: {
+      userAddress_contractAddress: {
+        userAddress: tx.fromAddress,
+        contractAddress: CONTRACT_ADDRESS.toLowerCase()
       }
-    } else {
-      console.log('Contract not connected. Batch saved to DB only.');
-      broadcast('batch_created', { id: batch.id, onChainId: null, txCount: normalized.length });
     }
+  });
 
-    res.status(201).json({
-      id:              batch.id,
-      onChainId:       batch.onChainId || null,
-      txCount:         normalized.length,
-      status:          batch.status,
-      transactionsRoot: root,
+  const existingTo = await prisma.layer2Balance.findUnique({
+    where: {
+      userAddress_contractAddress: {
+        userAddress: tx.toAddress,
+        contractAddress: CONTRACT_ADDRESS.toLowerCase()
+      }
+    }
+  });
+
+  const fromBalance = existingFrom ? BigInt(existingFrom.balanceWei) : 0n;
+  const toBalance   = existingTo   ? BigInt(existingTo.balanceWei)   : 0n;
+
+  const newFromBalance = fromBalance - txValue;
+  const newToBalance   = toBalance + txValue;
+
+  // 🧠 Safety check (should never go negative)
+  if (newFromBalance < 0n) {
+    throw new Error(`Negative balance detected for ${tx.fromAddress}`);
+  }
+
+  // ➖ update sender
+  await prisma.layer2Balance.upsert({
+    where: {
+      userAddress_contractAddress: {
+        userAddress: tx.fromAddress,
+        contractAddress: CONTRACT_ADDRESS.toLowerCase()
+      }
+    },
+    update: {
+      balanceWei: newFromBalance.toString()
+    },
+    create: {
+      userAddress: tx.fromAddress,
+      contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+      balanceWei: "0"
+    }
+  });
+
+  // ➕ update receiver
+  await prisma.layer2Balance.upsert({
+    where: {
+      userAddress_contractAddress: {
+        userAddress: tx.toAddress,
+        contractAddress: CONTRACT_ADDRESS.toLowerCase()
+      }
+    },
+    update: {
+      balanceWei: newToBalance.toString()
+    },
+    create: {
+      userAddress: tx.toAddress,
+      contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+      balanceWei: newToBalance.toString()
+    }
+  });
+}
+
+    // ✅ STORE TRANSACTIONS
+    await prisma.pendingTransaction.createMany({
+      data: normalized.map(tx => ({
+        fromAddress: tx.fromAddress,
+        toAddress:   tx.toAddress,
+        valueWei:    tx.valueWei,
+        status:      'pending',
+        nonce:       tx.nonce
+      }))
     });
+
+    console.log(`📥 Stored ${normalized.length} transactions in pool`);
+    //  INCREMENT NONCE AFTER SUCCESS
+for (const tx of normalized) {
+  await prisma.nonce.upsert({
+    where: {
+      userAddress_contractAddress: {
+        userAddress: tx.fromAddress,
+        contractAddress: CONTRACT_ADDRESS.toLowerCase()
+      }
+    },
+    update: {
+      currentNonce: { increment: 1 }
+    },
+    create: {
+      userAddress: tx.fromAddress,
+      contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+      currentNonce: 1
+    }
+  });
+}
+    broadcast('tx_added', { count: normalized.length });
+
+    return res.status(201).json({
+      success: true,
+      status: "pending",
+      message: "Transaction submitted to L2",
+      count: normalized.length
+    });
+
   } catch (err) {
-    console.error('Error creating batch:', err);
-    res.status(500).json({ error: 'Failed to create batch', details: err.message });
+    console.error('Error storing transactions:', err);
+    res.status(500).json({
+      error: 'Failed to store transactions',
+      details: err.message
+    });
   }
 });
 
@@ -2439,11 +2552,6 @@ app.get('/api/transactions/user/:address', async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    const balanceRecord = await prisma.layer2Balance.findFirst({
-      where: { userAddress: address.toLowerCase() },
-      orderBy: { updatedAt: 'desc' }
-    });
-
     res.json({
       transactions: txs.map(tx => ({
         hash:      tx.id,
@@ -2455,9 +2563,10 @@ app.get('/api/transactions/user/:address', async (req, res) => {
         batchId:   tx.batch?.onChainId || null,
         type:      'transfer',
         isInBatch: !!tx.batch,
-      })),
-      balance: balanceRecord?.balanceWei || '0'
+      }))
+      // ❌ REMOVE balance completely
     });
+
   } catch (err) {
     console.error('Error fetching user transactions:', err);
     res.status(500).json({ error: 'Failed to fetch user transactions' });
@@ -2467,45 +2576,57 @@ app.get('/api/transactions/user/:address', async (req, res) => {
 // ─── GET /api/balance/:address ────────────────────────────────────────────────
 app.get('/api/balance/:address', async (req, res) => {
   const { address } = req.params;
+
   try {
     let layer1BalanceWei = '0';
     let layer2BalanceWei = '0';
 
-    if (provider && contract) {
+    // ✅ L1 → blockchain
+    if (provider) {
       try {
-        const [ethBal, l2Bal] = await Promise.all([
-          provider.getBalance(address),
-          contract.balances(address)
-        ]);
+        const ethBal = await provider.getBalance(address);
         layer1BalanceWei = ethBal.toString();
-        layer2BalanceWei = l2Bal.toString();
       } catch (err) {
-        console.error('Blockchain balance fetch failed:', err.message);
+        console.error('L1 fetch failed:', err.message);
       }
     }
 
-    // Fall back to DB if chain gave zero
-    if (layer2BalanceWei === '0') {
-      const dbBal = await prisma.layer2Balance.findFirst({
-        where: { userAddress: address.toLowerCase() },
-        orderBy: { updatedAt: 'desc' }
-      });
-      if (dbBal) layer2BalanceWei = dbBal.balanceWei;
+    // ✅ L2 → ONLY DB (single source of truth)
+    const dbBal = await prisma.layer2Balance.findUnique({
+  where: {
+    userAddress_contractAddress: {
+      userAddress: address.toLowerCase(),
+      contractAddress: CONTRACT_ADDRESS.toLowerCase()
+    }
+  }
+});
+
+    if (dbBal) {
+      layer2BalanceWei = dbBal.balanceWei;
     }
 
-    // Update cache in DB
+    // ✅ Cache (optional)
     await prisma.balance.upsert({
       where: { address: address.toLowerCase() },
-      create: { address: address.toLowerCase(), layer1BalanceWei, layer2BalanceWei },
-      update: { layer1BalanceWei, layer2BalanceWei, lastSyncedAt: new Date() }
-    }).catch(() => {}); // non-fatal
+      create: {
+        address: address.toLowerCase(),
+        layer1BalanceWei,
+        layer2BalanceWei
+      },
+      update: {
+        layer1BalanceWei,
+        layer2BalanceWei,
+        lastSyncedAt: new Date()
+      }
+    }).catch(() => {});
 
-    res.json({
+    return res.json({
       layer1Balance: ethers.utils.formatEther(layer1BalanceWei),
       layer2Balance: ethers.utils.formatEther(layer2BalanceWei),
       layer1BalanceWei,
       layer2BalanceWei,
     });
+
   } catch (err) {
     console.error('Error fetching balance:', err);
     res.status(500).json({ error: 'Failed to fetch balance' });
@@ -2611,7 +2732,25 @@ app.delete('/api/admin/operators/:address', async (req, res) => {
     res.status(500).json({ error: 'Failed to remove operator' });
   }
 });
+app.get('/api/nonce/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
 
+    const record = await prisma.nonce.findUnique({
+      where: {
+        userAddress_contractAddress: {
+          userAddress: address.toLowerCase(),
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      }
+    });
+
+    res.json({ nonce: record?.currentNonce || 0 });
+
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch nonce' });
+  }
+});
 // ─── GET /api/admin/contracts ─────────────────────────────────────────────────
 app.get('/api/admin/contracts', async (req, res) => {
   try {
@@ -2674,6 +2813,7 @@ setInterval(async () => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 initBlockchain().then(() => {
+  startSequencer({ contract, wallet, broadcast });
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     console.log(`   Network  : ${NETWORK}`);

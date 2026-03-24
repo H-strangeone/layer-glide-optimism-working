@@ -47,8 +47,20 @@ export function useWallet() {
                 // Connected or switched account
                 setAddress(accounts[0]);
                 setIsConnected(true);
-                localStorage.setItem('walletConnected', 'true');
-                localStorage.setItem('lastConnectedAddress', accounts[0]);
+                const handleAccountsChanged = (accounts: string[]) => {
+  if (accounts.length === 0) {
+    setAddress(null);
+    setIsConnected(false);
+    localStorage.removeItem('walletConnected');
+    localStorage.removeItem('lastConnectedAddress');
+  } else {
+    setAddress(accounts[0]);
+    setIsConnected(true);
+    localStorage.setItem('walletConnected', 'true');
+    localStorage.setItem('lastConnectedAddress', accounts[0]);
+    window.location.reload(); // ← add this line
+  }
+};
             }
         };
 

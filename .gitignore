@@ -1,0 +1,20 @@
+# Node
+node_modules/
+backend/node_modules/
+
+# Env
+.env
+backend/.env
+
+# Prisma DB
+*.db
+*.db-journal
+backend/prisma/**
+
+# Hardhat
+artifacts/
+cache/
+
+# Build
+dist/
+build/

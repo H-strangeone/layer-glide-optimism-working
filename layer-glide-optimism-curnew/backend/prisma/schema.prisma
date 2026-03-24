@@ -115,3 +115,11 @@ model GasAnalytics {
   blockNumber       Int
   createdAt         DateTime @default(now())
 }
+model Nonce {
+  id              String   @id @default(uuid())
+  userAddress     String
+  contractAddress String
+  currentNonce    Int      @default(0)
+
+  @@unique([userAddress, contractAddress])
+}

@@ -70,6 +70,38 @@ function AppContent() {
   useRealtimeUpdates();
   const { isConnected } = useWallet();
 
+  async function ensureCorrectNetwork() {
+    if (!window.ethereum) return;
+
+    const chainId = "0x539";
+
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId }]
+      });
+    } catch (err) {
+      if (err.code === 4902) {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: "0x539",
+            chainName: "Hardhat Local",
+            rpcUrls: ["http://127.0.0.1:8545"],
+            nativeCurrency: {
+              name: "ETH",
+              symbol: "ETH",
+              decimals: 18
+            }
+          }]
+        });
+      }
+    }
+  }
+
+  useEffect(() => {
+    ensureCorrectNetwork();
+  }, []);
   return (
     <>
       <Navbar />
