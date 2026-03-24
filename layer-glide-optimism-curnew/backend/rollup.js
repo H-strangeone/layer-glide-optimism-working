@@ -189,10 +189,10 @@ export async function finalizeBatch(batchId) {
         // Update L2 balances
         for (const tx of batch.transactions) {
             // Deduct from sender's balance
-            await updateL2Balance(tx.from, tx.value, true);
+            // await updateL2Balance(tx.from, tx.value, true);
 
-            // Add to recipient's balance
-            await updateL2Balance(tx.to, tx.value, false);
+            // // Add to recipient's balance
+            // await updateL2Balance(tx.to, tx.value, false);
         }
 
         return { success: true, batch: updatedBatch };

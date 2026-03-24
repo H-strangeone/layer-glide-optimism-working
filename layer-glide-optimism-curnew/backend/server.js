@@ -1924,27 +1924,7 @@ async function initBlockchain() {
     return false;
   }
 }
-async function syncAllBalances() {
-  if (!contract) return;
-  try {
-    const balances = await prisma.layer2Balance.findMany();
-    for (const record of balances) {
-      const onChain = await contract.balances(record.userAddress);
-      await prisma.layer2Balance.update({
-        where: {
-          userAddress_contractAddress: {
-            userAddress: record.userAddress,
-            contractAddress: record.contractAddress
-          }
-        },
-        data: { balanceWei: onChain.toString() }
-      });
-    }
-    console.log('✅ Balances synced from chain');
-  } catch (err) {
-    console.error('Balance sync error:', err.message);
-  }
-}
+
 // ─── Contract Event Listeners ─────────────────────────────────────────────────
 // FIX: These keep the DB authoritative. Previously the DB had no idea what
 // the contract was doing — status never updated unless admin manually clicked.
@@ -1956,10 +1936,11 @@ function setupContractEventListeners() {
       const onChainId = batchId.toString();
       await prisma.batch.updateMany({
   where: {
-    id: batch.id,
-    onChainId: null // only update if not already set
+    onChainId: onChainId
   },
-  data: { onChainId }
+  data: {
+    status: 'finalized'
+  }
 });
       await prisma.pendingTransaction.updateMany({
         where: { batch: { onChainId } },
@@ -1977,10 +1958,11 @@ function setupContractEventListeners() {
       const onChainId = batchId.toString();
       await prisma.batch.updateMany({
   where: {
-    id: batch.id,
-    onChainId: null // only update if not already set
+    onChainId: onChainId
   },
-  data: { onChainId }
+  data: {
+    status: 'rejected'
+  }
 });
       await prisma.pendingTransaction.updateMany({
         where: { batch: { onChainId } },
@@ -1995,7 +1977,17 @@ function setupContractEventListeners() {
 
   contract.on('FundsDeposited', async (user, amount) => {
   try {
-    const onChainBal = await contract.balances(user);
+    const existing = await prisma.layer2Balance.findUnique({
+      where: {
+        userAddress_contractAddress: {
+          userAddress: user.toLowerCase(),
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      }
+    });
+
+    const current = existing ? BigInt(existing.balanceWei) : 0n;
+    const updated = current + BigInt(amount.toString());
 
     await prisma.layer2Balance.upsert({
       where: {
@@ -2007,10 +1999,10 @@ function setupContractEventListeners() {
       create: {
         userAddress: user.toLowerCase(),
         contractAddress: CONTRACT_ADDRESS.toLowerCase(),
-        balanceWei: onChainBal.toString()
+        balanceWei: updated.toString()
       },
       update: {
-        balanceWei: onChainBal.toString() // ✅ FIX
+        balanceWei: updated.toString()
       }
     });
 
@@ -2021,28 +2013,43 @@ function setupContractEventListeners() {
   }
 });
 
-  contract.on('FundsWithdrawn', async (user) => {
-    try {
-      const onChainBal = await contract.balances(user);
-      await prisma.layer2Balance.upsert({
-        where: {
-          userAddress_contractAddress: {
-            userAddress: user.toLowerCase(),
-            contractAddress: CONTRACT_ADDRESS.toLowerCase()
-          }
-        },
-        create: {
+  contract.on('FundsWithdrawn', async (user, amount) => {
+  try {
+    const existing = await prisma.layer2Balance.findUnique({
+      where: {
+        userAddress_contractAddress: {
           userAddress: user.toLowerCase(),
-          contractAddress: CONTRACT_ADDRESS.toLowerCase(),
-          balanceWei: onChainBal.toString()
-        },
-        update: { balanceWei: onChainBal.toString() }
-      });
-      broadcast('balance_updated', { address: user.toLowerCase() });
-    } catch (err) {
-      console.error('FundsWithdrawn handler error:', err.message);
-    }
-  });
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      }
+    });
+
+    const current = existing ? BigInt(existing.balanceWei) : 0n;
+    const updated = current - BigInt(amount.toString());
+
+    await prisma.layer2Balance.upsert({
+      where: {
+        userAddress_contractAddress: {
+          userAddress: user.toLowerCase(),
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      },
+      create: {
+        userAddress: user.toLowerCase(),
+        contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+        balanceWei: "0"
+      },
+      update: {
+        balanceWei: updated.toString()
+      }
+    });
+
+    broadcast('balance_updated', { address: user.toLowerCase() });
+
+  } catch (err) {
+    console.error('FundsWithdrawn handler error:', err.message);
+  }
+});
 
   console.log('📡 Contract event listeners active');
 }
@@ -2806,7 +2813,6 @@ setInterval(async () => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 initBlockchain().then(() => {
-  syncAllBalances();
   startSequencer({ contract, wallet, broadcast });
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
