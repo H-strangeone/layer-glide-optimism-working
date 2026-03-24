@@ -15,7 +15,7 @@
 //   if (!v.includes('.') && v.length >= 15) return v;
 //   // Otherwise treat as ETH string and convert
 //   try {
-//     return ethers.utils.parseEther(v).toString();
+//     return ethers.utils.utils.parseEther(v).toString();
 //   } catch {
 //     return v;
 //   }
@@ -114,15 +114,15 @@
 //         return false;
 //       }
 
-//       provider = new ethers.providers.AlchemyProvider("sepolia", ALCHEMY_API_KEY);
+//       provider = new ethers.utils.providers.AlchemyProvider("sepolia", ALCHEMY_API_KEY);
 //       const privateKey = process.env.PRIVATE_KEY;
 //       if (!privateKey) {
 //         console.error('PRIVATE_KEY not found in .env file.');
 //         return false;
 //       }
 
-//       const wallet = new ethers.Wallet(privateKey, provider);
-//       contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, wallet);
+//       const wallet = new ethers.utils.Wallet(privateKey, provider);
+//       contract = new ethers.utils.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, wallet);
 
 //       console.log(`Connected to Sepolia network`);
 //     } else {
@@ -130,7 +130,7 @@
 
 //       // For local development, try to connect to the Hardhat node
 //       try {
-//         provider = new ethers.providers.JsonRpcProvider("http://localhost:8545");
+//         provider = new ethers.utils.providers.JsonRpcProvider("http://localhost:8545");
 
 //         // Check if the node is running by getting the network
 //         const network = await provider.getNetwork();
@@ -138,8 +138,8 @@
 
 //         // Use the default Hardhat private key for local development
 //         const privateKey = process.env.PRIVATE_KEY || "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-//         const wallet = new ethers.Wallet(privateKey, provider);
-//         contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, wallet);
+//         const wallet = new ethers.utils.Wallet(privateKey, provider);
+//         contract = new ethers.utils.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, wallet);
 
 //         console.log(`Connected to local network`);
 
@@ -587,25 +587,25 @@
 
 //     // Validate addresses
 //     for (const tx of normalized) {
-//       if (!ethers.utils.isAddress(tx.fromAddress)) {
+//       if (!ethers.utils.utils.isAddress(tx.fromAddress)) {
 //         return res.status(400).json({ error: `Invalid from address: ${tx.fromAddress}` });
 //       }
-//       if (!ethers.utils.isAddress(tx.toAddress)) {
+//       if (!ethers.utils.utils.isAddress(tx.toAddress)) {
 //         return res.status(400).json({ error: `Invalid to address: ${tx.toAddress}` });
 //       }
 //     }
 
 //     // FIX 2: Build Merkle root correctly from normalized wei values
 //     const leaves = normalized.map(tx =>
-//       ethers.utils.keccak256(
-//         ethers.utils.defaultAbiCoder.encode(
+//       ethers.utils.utils.keccak256(
+//         ethers.utils.utils.defaultAbiCoder.encode(
 //           ['address', 'address', 'uint256'],
-//           [tx.fromAddress, tx.toAddress, ethers.BigNumber.from(tx.valueWei)]
+//           [tx.fromAddress, tx.toAddress, ethers.utils.BigNumber.from(tx.valueWei)]
 //         )
 //       )
 //     );
 
-//     let root = ethers.constants.HashZero;
+//     let root = ethers.utils.constants.HashZero;
 //     if (leaves.length > 0) {
 //       let layer = [...leaves];
 //       while (layer.length > 1) {
@@ -615,8 +615,8 @@
 //           const right = i + 1 < layer.length ? layer[i + 1] : layer[i];
 //           next.push(
 //             left <= right
-//               ? ethers.utils.keccak256(ethers.utils.concat([left, right]))
-//               : ethers.utils.keccak256(ethers.utils.concat([right, left]))
+//               ? ethers.utils.utils.keccak256(ethers.utils.utils.concat([left, right]))
+//               : ethers.utils.utils.keccak256(ethers.utils.utils.concat([right, left]))
 //           );
 //         }
 //         layer = next;
@@ -747,7 +747,7 @@
 //   const merkleProof = batch.merkleTree.getProof(index);
 
 //   // In a real implementation, the fraud proof would be computed based on an invalid state transition
-//   const fraudProof = ethers.utils.id("fraud proof");
+//   const fraudProof = ethers.utils.utils.id("fraud proof");
 
 //   res.json({
 //     fraudProof,
@@ -768,7 +768,7 @@
 //     }
 
 //     const feeData = await provider.getFeeData();
-//     const gasPriceGwei = Math.round(Number(ethers.utils.formatUnits(feeData.gasPrice, "gwei")));
+//     const gasPriceGwei = Math.round(Number(ethers.utils.utils.formatUnits(feeData.gasPrice, "gwei")));
 
 //     res.json({
 //       slow: (gasPriceGwei * 0.8).toFixed(0),
@@ -804,11 +804,11 @@
 //       try {
 //         // Get Ethereum balance
 //         const ethBalance = await provider.getBalance(address);
-//         layer1Balance = ethers.utils.formatEther(ethBalance);
+//         layer1Balance = ethers.utils.utils.formatEther(ethBalance);
 
 //         // Get Layer 2 balance from contract
 //         const l2Balance = await contract.balances(address);
-//         layer2Balance = ethers.utils.formatEther(l2Balance);
+//         layer2Balance = ethers.utils.utils.formatEther(l2Balance);
 
 //         console.log(`Fetched balances for ${address}: L1=${layer1Balance}, L2=${layer2Balance}`);
 //       } catch (error) {
@@ -1754,7 +1754,7 @@
 //     for (const batch of eligible) {
 //       try {
 //         const tx = await contract.finalizeBatch(
-//           ethers.BigNumber.from(batch.onChainId)
+//           ethers.utils.BigNumber.from(batch.onChainId)
 //         );
 //         await tx.wait();
 //         console.log(`✅ Auto-finalized batch onChainId=${batch.onChainId}`);
@@ -2186,50 +2186,89 @@ app.post('/api/transactions', async (req, res) => {
       return res.status(400).json({ error: 'transactions array required' });
     }
 
-    // ✅ Normalize
+    // NORMALIZE (KEEP ORIGINAL FROM FOR SIGNATURE)
     const normalized = transactions.map(tx => ({
-      fromAddress: (tx.from || tx.fromAddress || '').toLowerCase(),
-      toAddress:   (tx.to   || tx.toAddress   || '').toLowerCase(),
-      valueWei:    normalizeToWei(tx.amount || tx.value || tx.valueWei || '0'),
-      nonce:       tx.nonce
+      originalFrom: (tx.from || tx.fromAddress || '').toLowerCase(),
+      toAddress:    (tx.to   || tx.toAddress   || '').toLowerCase(),
+      valueWei:     normalizeToWei(tx.amount || tx.value || tx.valueWei || '0'),
+      nonce:        tx.nonce,
+      signature:    tx.signature,
+      fromAddress:  "" // will be filled AFTER verification
     }));
 
-    // ✅ Validate addresses
+    // VALIDATE ONLY TO ADDRESS
     for (const tx of normalized) {
-      if (!ethers.utils.isAddress(tx.fromAddress)) {
-        return res.status(400).json({ error: `Invalid from address: ${tx.fromAddress}` });
-      }
-      if (!ethers.utils.isAddress(tx.toAddress)) {
-        return res.status(400).json({ error: `Invalid to address: ${tx.toAddress}` });
-      }
-    }
-    // 🔥 NONCE VALIDATION
-for (const tx of normalized) {
-
-  const nonceRecord = await prisma.nonce.findUnique({
-    where: {
-      userAddress_contractAddress: {
-        userAddress: tx.fromAddress,
-        contractAddress: CONTRACT_ADDRESS.toLowerCase()
-      }
-    }
-  });
-
-  const expectedNonce = nonceRecord ? nonceRecord.currentNonce : 0;
-
-  if (tx.nonce === undefined) {
+  if (BigInt(tx.valueWei) <= 0n) {
     return res.status(400).json({
-      error: "Nonce required"
-    });
-  }
-
-  if (tx.nonce !== expectedNonce) {
-    return res.status(400).json({
-      error: `Invalid nonce. Expected ${expectedNonce}, got ${tx.nonce}`
+      error: "Transaction value must be greater than 0"
     });
   }
 }
-    // 🔥 STEP 1: CHECK BALANCES
+    for (const tx of normalized) {
+      if (!ethers.utils.isAddress(tx.toAddress)) {
+        return res.status(400).json({
+          error: `Invalid to address: ${tx.toAddress}`
+        });
+      }
+    }
+
+    // SIGNATURE + NONCE VALIDATION
+    for (const tx of normalized) {
+
+      if (!tx.signature) {
+        return res.status(400).json({
+          error: "Signature required"
+        });
+      }
+
+      // IMPORTANT: use ORIGINAL FROM (not empty one)
+      const messageHash = ethers.utils.solidityKeccak256(
+        ["address", "address", "uint256", "uint256"],
+        [tx.originalFrom, tx.toAddress, tx.valueWei, tx.nonce]
+      );
+
+      const recovered = ethers.utils.verifyMessage(
+        ethers.utils.arrayify(messageHash),
+        tx.signature
+      );
+
+      const fromAddress = recovered.toLowerCase();
+
+      if (!ethers.utils.isAddress(fromAddress)) {
+        return res.status(400).json({
+          error: "Recovered invalid address"
+        });
+      }
+
+      // NONCE CHECK (USING TRUSTED ADDRESS)
+      const nonceRecord = await prisma.nonce.findUnique({
+        where: {
+          userAddress_contractAddress: {
+            userAddress: fromAddress,
+            contractAddress: CONTRACT_ADDRESS.toLowerCase()
+          }
+        }
+      });
+
+      const expectedNonce = nonceRecord ? nonceRecord.currentNonce : 0;
+
+      if (tx.nonce === undefined) {
+        return res.status(400).json({
+          error: "Nonce required"
+        });
+      }
+
+      if (tx.nonce !== expectedNonce) {
+        return res.status(400).json({
+          error: `Invalid nonce. Expected ${expectedNonce}, got ${tx.nonce}`
+        });
+      }
+
+      // TRUST ONLY RECOVERED ADDRESS
+      tx.fromAddress = fromAddress;
+    }
+
+    // STEP 1: CHECK BALANCES
     for (const tx of normalized) {
       const balance = await prisma.layer2Balance.findUnique({
         where: {
@@ -2250,78 +2289,74 @@ for (const tx of normalized) {
       }
     }
 
-    // 🔥 STEP 2: UPDATE BALANCES (OPTIMISTIC EXECUTION)
-    // 🔥 STEP 2: UPDATE BALANCES (SAFE BIGINT VERSION)
-for (const tx of normalized) {
-  const txValue = BigInt(tx.valueWei);
+    // STEP 2: UPDATE BALANCES
+    for (const tx of normalized) {
+      const txValue = BigInt(tx.valueWei);
 
-  const existingFrom = await prisma.layer2Balance.findUnique({
-    where: {
-      userAddress_contractAddress: {
-        userAddress: tx.fromAddress,
-        contractAddress: CONTRACT_ADDRESS.toLowerCase()
+      const existingFrom = await prisma.layer2Balance.findUnique({
+        where: {
+          userAddress_contractAddress: {
+            userAddress: tx.fromAddress,
+            contractAddress: CONTRACT_ADDRESS.toLowerCase()
+          }
+        }
+      });
+
+      const existingTo = await prisma.layer2Balance.findUnique({
+        where: {
+          userAddress_contractAddress: {
+            userAddress: tx.toAddress,
+            contractAddress: CONTRACT_ADDRESS.toLowerCase()
+          }
+        }
+      });
+
+      const fromBalance = existingFrom ? BigInt(existingFrom.balanceWei) : 0n;
+      const toBalance   = existingTo   ? BigInt(existingTo.balanceWei)   : 0n;
+
+      const newFromBalance = fromBalance - txValue;
+      const newToBalance   = toBalance + txValue;
+
+      if (newFromBalance < 0n) {
+        throw new Error(`Negative balance detected for ${tx.fromAddress}`);
       }
+
+      await prisma.layer2Balance.upsert({
+        where: {
+          userAddress_contractAddress: {
+            userAddress: tx.fromAddress,
+            contractAddress: CONTRACT_ADDRESS.toLowerCase()
+          }
+        },
+        update: {
+          balanceWei: newFromBalance.toString()
+        },
+        create: {
+          userAddress: tx.fromAddress,
+          contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+          balanceWei: "0"
+        }
+      });
+
+      await prisma.layer2Balance.upsert({
+        where: {
+          userAddress_contractAddress: {
+            userAddress: tx.toAddress,
+            contractAddress: CONTRACT_ADDRESS.toLowerCase()
+          }
+        },
+        update: {
+          balanceWei: newToBalance.toString()
+        },
+        create: {
+          userAddress: tx.toAddress,
+          contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+          balanceWei: newToBalance.toString()
+        }
+      });
     }
-  });
 
-  const existingTo = await prisma.layer2Balance.findUnique({
-    where: {
-      userAddress_contractAddress: {
-        userAddress: tx.toAddress,
-        contractAddress: CONTRACT_ADDRESS.toLowerCase()
-      }
-    }
-  });
-
-  const fromBalance = existingFrom ? BigInt(existingFrom.balanceWei) : 0n;
-  const toBalance   = existingTo   ? BigInt(existingTo.balanceWei)   : 0n;
-
-  const newFromBalance = fromBalance - txValue;
-  const newToBalance   = toBalance + txValue;
-
-  // 🧠 Safety check (should never go negative)
-  if (newFromBalance < 0n) {
-    throw new Error(`Negative balance detected for ${tx.fromAddress}`);
-  }
-
-  // ➖ update sender
-  await prisma.layer2Balance.upsert({
-    where: {
-      userAddress_contractAddress: {
-        userAddress: tx.fromAddress,
-        contractAddress: CONTRACT_ADDRESS.toLowerCase()
-      }
-    },
-    update: {
-      balanceWei: newFromBalance.toString()
-    },
-    create: {
-      userAddress: tx.fromAddress,
-      contractAddress: CONTRACT_ADDRESS.toLowerCase(),
-      balanceWei: "0"
-    }
-  });
-
-  // ➕ update receiver
-  await prisma.layer2Balance.upsert({
-    where: {
-      userAddress_contractAddress: {
-        userAddress: tx.toAddress,
-        contractAddress: CONTRACT_ADDRESS.toLowerCase()
-      }
-    },
-    update: {
-      balanceWei: newToBalance.toString()
-    },
-    create: {
-      userAddress: tx.toAddress,
-      contractAddress: CONTRACT_ADDRESS.toLowerCase(),
-      balanceWei: newToBalance.toString()
-    }
-  });
-}
-
-    // ✅ STORE TRANSACTIONS
+    // STORE TRANSACTIONS
     await prisma.pendingTransaction.createMany({
       data: normalized.map(tx => ({
         fromAddress: tx.fromAddress,
@@ -2332,26 +2367,28 @@ for (const tx of normalized) {
       }))
     });
 
-    console.log(`📥 Stored ${normalized.length} transactions in pool`);
-    //  INCREMENT NONCE AFTER SUCCESS
-for (const tx of normalized) {
-  await prisma.nonce.upsert({
-    where: {
-      userAddress_contractAddress: {
-        userAddress: tx.fromAddress,
-        contractAddress: CONTRACT_ADDRESS.toLowerCase()
-      }
-    },
-    update: {
-      currentNonce: { increment: 1 }
-    },
-    create: {
-      userAddress: tx.fromAddress,
-      contractAddress: CONTRACT_ADDRESS.toLowerCase(),
-      currentNonce: 1
+    console.log(`Stored ${normalized.length} transactions in pool`);
+
+    // INCREMENT NONCE
+    for (const tx of normalized) {
+      await prisma.nonce.upsert({
+        where: {
+          userAddress_contractAddress: {
+            userAddress: tx.fromAddress,
+            contractAddress: CONTRACT_ADDRESS.toLowerCase()
+          }
+        },
+        update: {
+          currentNonce: { increment: 1 }
+        },
+        create: {
+          userAddress: tx.fromAddress,
+          contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+          currentNonce: 1
+        }
+      });
     }
-  });
-}
+
     broadcast('tx_added', { count: normalized.length });
 
     return res.status(201).json({
@@ -2418,7 +2455,7 @@ app.post('/api/batches/challenge', async (req, res) => {
       try {
         const proofArray = Array.isArray(merkleProof) ? merkleProof : JSON.parse(merkleProof);
         const tx = await contract.reportFraud(
-          ethers.BigNumber.from(batch.onChainId),
+          ethers.utils.BigNumber.from(batch.onChainId),
           fraudProofHash,
           proofArray
         );
@@ -2797,9 +2834,17 @@ setInterval(async () => {
       }
     });
     for (const batch of eligible) {
+      if (batch.status === "finalized") continue;
       try {
         console.log(`⏰ Auto-finalizing batch onChainId=${batch.onChainId}`);
-        const tx = await contract.finalizeBatch(ethers.BigNumber.from(batch.onChainId));
+        if (!contract || !wallet) {
+  console.log("Skipping finalize — contract not ready");
+  continue;
+}
+
+const tx = await contract.finalizeBatch(
+  ethers.utils.BigNumber.from(batch.onChainId)
+);
         await tx.wait();
         // DB update handled by BatchFinalized event listener
       } catch (err) {
