@@ -2184,6 +2184,7 @@ app.post('/api/transactions', async (req, res) => {
       fromAddress: (tx.from || tx.fromAddress || '').toLowerCase(),
       toAddress:   (tx.to   || tx.toAddress   || '').toLowerCase(),
       valueWei:    normalizeToWei(tx.amount || tx.value || tx.valueWei || '0'),
+      nonce:       tx.nonce
     }));
 
     // ✅ Validate addresses
@@ -2195,7 +2196,32 @@ app.post('/api/transactions', async (req, res) => {
         return res.status(400).json({ error: `Invalid to address: ${tx.toAddress}` });
       }
     }
+    // 🔥 NONCE VALIDATION
+for (const tx of normalized) {
 
+  const nonceRecord = await prisma.nonce.findUnique({
+    where: {
+      userAddress_contractAddress: {
+        userAddress: tx.fromAddress,
+        contractAddress: CONTRACT_ADDRESS.toLowerCase()
+      }
+    }
+  });
+
+  const expectedNonce = nonceRecord ? nonceRecord.currentNonce : 0;
+
+  if (tx.nonce === undefined) {
+    return res.status(400).json({
+      error: "Nonce required"
+    });
+  }
+
+  if (tx.nonce !== expectedNonce) {
+    return res.status(400).json({
+      error: `Invalid nonce. Expected ${expectedNonce}, got ${tx.nonce}`
+    });
+  }
+}
     // 🔥 STEP 1: CHECK BALANCES
     for (const tx of normalized) {
       const balance = await prisma.layer2Balance.findUnique({
@@ -2294,12 +2320,31 @@ for (const tx of normalized) {
         fromAddress: tx.fromAddress,
         toAddress:   tx.toAddress,
         valueWei:    tx.valueWei,
-        status:      'pending'
+        status:      'pending',
+        nonce:       tx.nonce
       }))
     });
 
     console.log(`📥 Stored ${normalized.length} transactions in pool`);
-
+    //  INCREMENT NONCE AFTER SUCCESS
+for (const tx of normalized) {
+  await prisma.nonce.upsert({
+    where: {
+      userAddress_contractAddress: {
+        userAddress: tx.fromAddress,
+        contractAddress: CONTRACT_ADDRESS.toLowerCase()
+      }
+    },
+    update: {
+      currentNonce: { increment: 1 }
+    },
+    create: {
+      userAddress: tx.fromAddress,
+      contractAddress: CONTRACT_ADDRESS.toLowerCase(),
+      currentNonce: 1
+    }
+  });
+}
     broadcast('tx_added', { count: normalized.length });
 
     return res.status(201).json({
@@ -2680,7 +2725,25 @@ app.delete('/api/admin/operators/:address', async (req, res) => {
     res.status(500).json({ error: 'Failed to remove operator' });
   }
 });
+app.get('/api/nonce/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
 
+    const record = await prisma.nonce.findUnique({
+      where: {
+        userAddress_contractAddress: {
+          userAddress: address.toLowerCase(),
+          contractAddress: CONTRACT_ADDRESS.toLowerCase()
+        }
+      }
+    });
+
+    res.json({ nonce: record?.currentNonce || 0 });
+
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch nonce' });
+  }
+});
 // ─── GET /api/admin/contracts ─────────────────────────────────────────────────
 app.get('/api/admin/contracts', async (req, res) => {
   try {

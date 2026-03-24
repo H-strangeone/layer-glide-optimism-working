@@ -318,17 +318,19 @@ export const executeL2Transaction = async (recipient: string, amount: string) =>
   const provider = await getProvider();
   const signer = await provider.getSigner();
   const from = await signer.getAddress();
-
+  const nonce = await getNonce(from);
   const response = await fetch(
     `${import.meta.env.VITE_API_URL || 'http://localhost:5500'}/api/transactions`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      
       body: JSON.stringify({
         transactions: [{
           from,
           to: recipient,
-          amount,
+          value: amount,
+          nonce
         }]
       })
     }
@@ -393,43 +395,7 @@ export const executeL2BatchTransaction = async (recipients: string[], amounts: s
 export const batchTransfer = executeL2BatchTransaction;
 
 // Submit a batch with Merkle root
-export const submitBatchWithMerkleRoot = async (merkleRoot: string) => {
-  try {
-    if (!merkleRoot || typeof merkleRoot !== 'string') {
-      throw new Error('Invalid Merkle root: Merkle root must be a non-empty string');
-    }
 
-    const contract = await getContract();
-    if (!contract) {
-      throw new Error('Failed to initialize contract instance');
-    }
-
-    console.log('Submitting batch with Merkle root:', merkleRoot);
-
-    // Get the current batch ID
-    const nextBatchId = await contract.nextBatchId();
-    console.log('Next batch ID:', nextBatchId.toString());
-
-    // Submit the batch with the current batch ID
-    await ensureCorrectNetwork();
-    const tx = await contract.submitBatch([merkleRoot]);
-    await tx.wait();
-
-    toast({
-      title: 'Success',
-      description: 'Batch submitted successfully',
-    });
-    return tx;
-  } catch (error) {
-    console.error('Error submitting batch:', error);
-    toast({
-      title: 'Error',
-      description: 'Failed to submit batch: ' + (error instanceof Error ? error.message : String(error)),
-      variant: 'destructive',
-    });
-    throw error;
-  }
-};
 
 // Verify a batch
 export const verifyBatch = async (batchId: bigint | number | string) => {
@@ -570,7 +536,11 @@ export function formatLargeNumber(value: string): string {
     return "0.000000";
   }
 }
-
+export const getNonce = async (address: string): Promise<number> => {
+  const res = await fetch(`${import.meta.env.VITE_API_URL}/api/nonce/${address}`);
+  const data = await res.json();
+  return data.nonce || 0;
+};
 // Get all batches (admin only)
 export const getBatches = async (): Promise<Batch[]> => {
   try {

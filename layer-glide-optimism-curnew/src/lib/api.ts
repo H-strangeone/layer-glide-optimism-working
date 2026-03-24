@@ -1,7 +1,7 @@
 
 import { toast } from "@/components/ui/use-toast";
 import { Transaction } from "./merkleTree";
-
+import { getNonce } from './ethers';
 const API_URL = "http://localhost:5500/api";
 
 // Interface for batch data
@@ -13,7 +13,6 @@ export interface Batch {
   verified: boolean;
   finalized: boolean;
 }
-
 // Interface for transaction status
 export interface TransactionStatus {
   id: string;
@@ -67,25 +66,38 @@ export const fetchBatchById = async (batchId: string): Promise<Batch | null> => 
 // Submit transactions to the backend
 export const submitTransactions = async (transactions: Transaction[]): Promise<string> => {
   try {
+    //  STEP 1 — GET BASE NONCE (use sender)
+    const baseNonce = await getNonce(transactions[0].sender);
+
+    //  STEP 2 — ASSIGN NONCE
+    const txsWithNonce = transactions.map((tx, i) => ({
+      from: tx.sender,        //  map correctly
+      to: tx.recipient,
+      value: tx.amount,
+      nonce: baseNonce + i
+    }));
+
+    //  STEP 3 — SEND
     const response = await fetch(`${API_URL}/transactions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ transactions }),
+      body: JSON.stringify({ transactions: txsWithNonce }),
     });
 
     if (!response.ok) {
-      throw new Error("Failed to submit transactions");
+      const err = await response.json();
+      throw new Error(err.error || "Failed to submit transactions");
     }
 
-    const { batchId } = await response.json();
-    return batchId;
-  } catch (error) {
+    const result = await response.json();
+    return "submitted";
+  } catch (error: any) {
     console.error("Error submitting transactions:", error);
     toast({
       title: "Error",
-      description: "Failed to submit transactions. Please try again later.",
+      description: error.message || "Failed to submit transactions",
       variant: "destructive",
     });
     throw error;

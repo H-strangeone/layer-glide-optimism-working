@@ -15,6 +15,7 @@ export function startSequencer({ contract, wallet, broadcast }) {
   console.log("🚀 Sequencer started...");
 
   setInterval(async () => {
+    let txIds =[];
     try {
       // 🔒 1. Fetch pending txs (FIFO)
       const pendingTxs = await prisma.pendingTransaction.findMany({
@@ -31,7 +32,7 @@ export function startSequencer({ contract, wallet, broadcast }) {
       console.log(`📦 Building batch (${pendingTxs.length} txs)`);
 
       // 🔐 2. Mark them as "processing" (avoid double batching)
-      const txIds = pendingTxs.map(tx => tx.id);
+      txIds = pendingTxs.map(tx => tx.id);
 
       await prisma.pendingTransaction.updateMany({
         where: { id: { in: txIds } },
@@ -98,8 +99,27 @@ export function startSequencer({ contract, wallet, broadcast }) {
       console.log(`🧱 Batch created: ${batch.id}`);
 
       // ⛓️ 6. Submit to blockchain
-      const tx = await contract.submitBatch(root, pendingTxs.length);
-      const receipt = await tx.wait();
+      let receipt;
+
+try {
+  const tx = await contract.submitBatch(root, pendingTxs.length);
+  receipt = await tx.wait();
+} catch (err) {
+  console.error("❌ On-chain submission failed:", err.message);
+
+  // rollback txs
+  await prisma.pendingTransaction.updateMany({
+    where: { id: { in: txIds } },
+    data: { status: "pending", batchId: null }
+  });
+
+  await prisma.batch.update({
+    where: { id: batch.id },
+    data: { status: "failed" }
+  });
+
+  return;
+}
 
       // 🧠 7. Parse event (robust way)
       let onChainId = null;
@@ -133,19 +153,19 @@ const existing = await prisma.batch.findUnique({
 if (existing) {
   console.log("⚠️ Duplicate onChainId, skipping:", onChainId);
 
-  // ❌ do NOT revert to pending → causes infinite loop
+  //  do NOT revert to pending → causes infinite loop
 
-  await prisma.pendingTransaction.updateMany({
-    where: { batchId: batch.id },
-    data: {
-      status: "failed"
-    }
-  });
+  // await prisma.pendingTransaction.updateMany({
+  //   where: { batchId: batch.id },
+  //   data: {
+  //     status: "failed"
+  //   }
+  // });
 
-  await prisma.batch.update({
-    where: { id: batch.id },
-    data: { status: "failed" }
-  });
+  // await prisma.batch.update({
+  //   where: { id: batch.id },
+  //   data: { status: "failed" }
+  // });
 
   return;
 }
