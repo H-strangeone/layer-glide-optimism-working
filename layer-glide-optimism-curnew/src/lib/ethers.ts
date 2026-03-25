@@ -1,949 +1,371 @@
-import { BrowserProvider, Contract, formatEther, parseEther, formatUnits, TransactionResponse, TransactionReceipt as EthersTransactionReceipt, Block, JsonRpcSigner } from "ethers";
-import { ethers, EventLog, Log } from 'ethers';
-
+import { BrowserProvider, Contract, formatEther, parseEther, ethers } from "ethers";
 import { toast } from "@/components/ui/use-toast";
-import { db } from './db';
 import { CONTRACT_ADDRESS } from "@/config/contract";
 
-// Contract ABI
+// ─── ABI ──────────────────────────────────────────────────────────────────────
 const CONTRACT_ABI = [
   "function depositFunds() payable",
   "function withdrawFunds(uint256 _amount)",
-  "function executeL2Transaction(address _recipient, uint256 _amount)",
-  "function executeL2BatchTransaction(address[] _recipients, uint256[] _amounts)",
-  "function submitBatch(bytes32 _transactionsRoot, uint256 _txCount)",
-  "function verifyBatch(uint256 _batchId)",
+  "function withdrawWithProof(bytes32 _withdrawalRoot, uint256 _amount, uint256 _nonce, bytes32[] calldata _proof)",
+  "function submitBatch(bytes32 _txRoot, bytes32 _stateRoot, uint256 _txCount) returns (uint256)",
   "function finalizeBatch(uint256 _batchId)",
-  "function reportFraud(uint256 batchId, bytes32 fraudProofHash, bytes32[] calldata merkleProof)",
-  "function balances(address) view returns (uint256)",
-  "function admin() view returns (address)",
+  "function submitFraudProof(uint256 _batchId, bytes32 _fraudulentTxHash, bytes32[] calldata _txProof, bytes32 _correctStateRoot)",
+  "function verifyL2Signature(address _from, address _to, uint256 _value, uint256 _nonce, uint256 _deadline, bytes calldata _sig) view returns (bool)",
+  "function l1Balances(address) view returns (uint256)",
+  "function l2Balances(address) view returns (uint256)",
   "function isOperator(address) view returns (bool)",
-  "function changeAdmin(address newAdmin)",
-  "function addOperator(address operator)",
-  "function removeOperator(address operator)",
+  "function operatorBonds(address) view returns (uint256)",
+  "function nonces(address) view returns (uint256)",
+  "function admin() view returns (address)",
   "function nextBatchId() view returns (uint256)",
-  "function slashingPenalty() view returns (uint256)",
-  "function batches(uint256) view returns (uint256 batchId, bytes32 transactionsRoot, uint256 timestamp, bool verified, bool finalized)",
-  "event TransactionExecuted(address indexed from, address indexed to, uint256 value, uint256 timestamp, uint256 indexed batchId)",
-  "event BatchSubmitted(uint256 indexed batchId, bytes32 transactionsRoot)",
-  "event BatchVerified(uint256 indexed batchId)",
-  "event BatchFinalized(uint256 indexed batchId)",
-  "event FraudReported(uint256 indexed batchId, bytes32 fraudProof)",
-  "event AdminChanged(address indexed previousAdmin, address indexed newAdmin)",
-  "event OperatorAdded(address indexed operator)",
-  "event OperatorRemoved(address indexed operator)",
+  "function challengePeriod() view returns (uint256)",
+  "function currentStateRoot() view returns (bytes32)",
+  "function isChallengeWindowOpen(uint256 _batchId) view returns (bool)",
+  "function addOperator(address op)",
+  "function removeOperator(address op)",
+  "function depositOperatorBond() payable",
+  "function batches(uint256) view returns (uint256 batchId, bytes32 txRoot, bytes32 stateRoot, bytes32 prevStateRoot, uint256 submittedAt, address submitter, bool finalized, bool fraudulent, uint256 txCount)",
+  "event BatchSubmitted(uint256 indexed batchId, bytes32 txRoot, bytes32 stateRoot, bytes32 prevStateRoot, address submitter, uint256 txCount)",
+  "event BatchFinalized(uint256 indexed batchId, bytes32 stateRoot)",
+  "event FraudProofAccepted(uint256 indexed batchId, address challenger, uint256 reward)",
   "event FundsDeposited(address indexed user, uint256 amount)",
   "event FundsWithdrawn(address indexed user, uint256 amount)",
-  "event FraudPenaltyApplied(address indexed user, uint256 penalty)",
-  "event BatchRejected(uint256 indexed batchId, address challenger)",
-"event OperatorSlashed(address indexed operator, uint256 amount, address challenger)",
-"event OperatorBonded(address indexed operator, uint256 amount)",
+  "event OperatorSlashed(address indexed operator, uint256 amount, address challenger)",
 ];
 
-// Network settings
+// ─── Network Settings ────────────────────────────────────────────────────────
 export const NETWORK_SETTINGS = {
   sepolia: {
-    chainId: "0xaa36a7", // 11155111 in hex
+    chainId: "0xaa36a7",
     chainName: "Sepolia",
-    nativeCurrency: {
-      name: "Sepolia Ether",
-      symbol: "ETH",
-      decimals: 18,
-    },
-    rpcUrls: ["https://eth-sepolia.infura.io/v3/", "https://eth-sepolia.g.alchemy.com/v2/"],
+    nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://eth-sepolia.g.alchemy.com/v2/"],
     blockExplorerUrls: ["https://sepolia.etherscan.io"],
   },
   localhost: {
-    chainId: "0x539", // 1337 in hex
+    chainId: "0x539",
     chainName: "Hardhat",
-    nativeCurrency: {
-      name: "Ethereum",
-      symbol: "ETH",
-      decimals: 18,
-    },
+    nativeCurrency: { name: "Ethereum", symbol: "ETH", decimals: 18 },
     rpcUrls: ["http://127.0.0.1:8545"],
     blockExplorerUrls: [],
   },
 };
 
-// Define a type for window with ethereum property
-declare global {
-  interface Window {
-    ethereum?: any;
-  }
-}
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5500';
 
-// Transaction types
-export interface TransactionHistory {
-  hash: string;
-  from: string;
-  to: string;
-  value: string;
-  status: string;
-  gasPrice: string;
-  createdAt: number;
-}
+// ─── Provider ────────────────────────────────────────────────────────────────
+export const getProvider = async (): Promise<BrowserProvider> => {
+  if (!window.ethereum) throw new Error("MetaMask not found");
+  return new BrowserProvider(window.ethereum);
+};
 
-export interface TransactionEvent {
-  eventName: string;
-  args: {
-    transactionHash: string;
-    from: string;
-    to: string;
-    value: bigint;
-  };
-}
-
-export interface TransactionReceipt {
-  status: string;
-  effectiveGasPrice?: bigint;
-}
-
-export type TransactionStatus = "pending" | "confirmed" | "failed";
-
-interface Batch {
-  id: string;
-  transactionsRoot: string;
-  timestamp: string;
-  verified: boolean;
-  finalized: boolean;
-}
-
-// Initialize provider and contract
-
-
-// Get contract instance
 export const getContract = async () => {
-  try {
-    const provider = await getProvider();
-
-    // First verify that we're connected to the correct network
-    const network = await provider.getNetwork();
-    console.log('Connected to network:', network.name, 'chainId:', network.chainId);
-
-    // Get the signer
-    const signer = await provider.getSigner();
-    console.log('Signer address:', await signer.getAddress());
-
-    // Verify that the contract exists at the specified address
-    const code = await provider.getCode(CONTRACT_ADDRESS);
-    if (code === '0x') {
-      console.error('No contract deployed at address:', CONTRACT_ADDRESS);
-      throw new Error(`No contract deployed at ${CONTRACT_ADDRESS}`);
-    }
-
-    // Create contract instance
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-
-    // Test if the contract is accessible and has the correct interface
-    try {
-      // Try to call a view function that should always work
-      const adminAddress = await contract.admin();
-      console.log('Contract initialized successfully, admin:', adminAddress);
-      return contract;
-    } catch (error: any) {
-      console.error('Contract interface error:', error);
-      if (error.message.includes('call revert exception')) {
-        throw new Error('Contract call reverted. Please check if you are connected to the correct network.');
-      } else if (error.message.includes('BAD_DATA')) {
-        throw new Error('Contract interface mismatch. The ABI might not match the deployed contract.');
-      }
-      throw error;
-    }
-  } catch (error: any) {
-    console.error('Error initializing contract:', error);
-    if (error.message.includes('MetaMask is not installed')) {
-      throw new Error('Please install MetaMask to interact with the blockchain.');
-    } else if (error.message.includes('user rejected')) {
-      throw new Error('Please connect your wallet to continue.');
-    } else if (error.message.includes('network')) {
-      throw new Error('Please connect to the correct network (Hardhat or Sepolia).');
-    }
-    throw new Error('Failed to initialize contract. Please check your wallet connection and network.');
-  }
+  const provider = await getProvider();
+  const signer   = await provider.getSigner();
+  return new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 };
 
-// Get transaction history for an address
-export const getTransactionHistory = async (address: string): Promise<TransactionHistory[]> => {
-  try {
-    // First try to get from the blockchain
+// ─── Network ─────────────────────────────────────────────────────────────────
+export const ensureCorrectNetwork = async () => {
+  if (!window.ethereum) return;
+  const chainId = await window.ethereum.request({ method: "eth_chainId" });
+  if (chainId !== "0x539") {
     try {
-      const contract = await getContract();
-      const provider = await getProvider();
-
-      // Get all TransactionExecuted events for this address
-      const filter = contract.filters.TransactionExecuted(address);
-      await ensureCorrectNetwork();
-      const events = await contract.queryFilter(filter);
-
-      // Convert events to TransactionHistory format
-      const transactions = await Promise.all(events.map(async (event) => {
-        const block = await provider.getBlock(event.blockNumber);
-        // Cast event to EventLog to access args
-        const eventLog = event as ethers.EventLog;
-        return {
-          hash: event.transactionHash,
-          from: eventLog.args[0], // sender
-          to: eventLog.args[1],   // recipient
-          value: eventLog.args[2].toString(), // amount
-          status: "confirmed", // Since we're getting past events, they're confirmed
-          gasPrice: eventLog.args[3]?.toString() || "0", // gas price if available
-          createdAt: block?.timestamp || Math.floor(Date.now() / 1000) // Use createdAt instead of timestamp
-        };
-      }));
-
-      return transactions;
-    } catch (error) {
-      console.error("Error getting transaction history from blockchain:", error);
-
-      // If blockchain fails, try to get from the API
-      try {
-        const response = await fetch(`http://localhost:5500/api/transactions?address=${address}`);
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        // Ensure all transactions have createdAt field
-        return data.map((tx: any) => ({
-          ...tx,
-          createdAt: tx.createdAt || tx.timestamp || Math.floor(Date.now() / 1000)
-        }));
-      } catch (apiError) {
-        console.error("Error getting transaction history from API:", apiError);
-        return [];
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: "0x539" }],
+      });
+    } catch (err: any) {
+      if (err.code === 4902) {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: "0x539",
+            chainName: "Hardhat Local",
+            rpcUrls: ["http://127.0.0.1:8545"],
+            nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }
+          }]
+        });
       }
     }
-  } catch (error) {
-    console.error("Error fetching transaction history:", error);
-    return [];
   }
 };
 
-// Get transaction status
-export const getTransactionStatus = async (hash: string): Promise<TransactionReceipt> => {
+export const getNetworkName = (chainId: string | number): string => {
+  const hex = typeof chainId === 'number' ? `0x${chainId.toString(16)}` : chainId;
+  switch (hex) {
+    case NETWORK_SETTINGS.sepolia.chainId: return "Sepolia";
+    case NETWORK_SETTINGS.localhost.chainId: return "Hardhat";
+    default: return `Chain ${parseInt(hex as string, 16)}`;
+  }
+};
+
+export const switchNetwork = async (networkName: "sepolia" | "localhost") => {
+  const net = NETWORK_SETTINGS[networkName];
+  try {
+    await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: net.chainId }] });
+    return true;
+  } catch (err: any) {
+    if (err.code === 4902) {
+      await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{ ...net }] });
+      return true;
+    }
+    return false;
+  }
+};
+
+// ─── Balances ─────────────────────────────────────────────────────────────────
+export const getLayer1Balance = async (address: string): Promise<string> => {
   try {
     const provider = await getProvider();
-    const receipt = await provider.getTransactionReceipt(hash);
-
-    if (!receipt) {
-      return { status: "pending" };
-    }
-
-    return {
-      status: receipt.status === 1 ? "confirmed" : "failed",
-      effectiveGasPrice: receipt.gasPrice,
-    };
-  } catch (error) {
-    console.error("Error getting transaction status:", error);
-    return { status: "failed" };
-  }
+    const balance  = await provider.getBalance(address);
+    return formatEther(balance);
+  } catch { return '0'; }
 };
 
-// Subscribe to transaction events
-export const subscribeToTransactionEvents = async (callback: (event: TransactionEvent) => void): Promise<() => void> => {
-  const contract = await getContract();
-
-  // Subscribe to TransactionExecuted events
-  contract.on("TransactionExecuted", (sender, recipient, amount, event) => {
-    callback({
-      eventName: "TransactionSubmitted",
-      args: {
-        transactionHash: event.transactionHash,
-        from: sender,
-        to: recipient,
-        value: amount,
-      },
-    });
-  });
-
-  // Return unsubscribe function
-  return () => {
-    contract.removeAllListeners();
-  };
-};
-
-// Deposit funds to Layer 2
-export const depositFunds = async (amount: string) => {
+export const getLayer2Balance = async (address: string): Promise<string> => {
   try {
-    const contract = await getContract();
-    await ensureCorrectNetwork();
-    const tx = await contract.depositFunds({
-      value: parseEther(amount)
-    });
-    await tx.wait();
-    toast({
-      title: "Success",
-      description: "Funds deposited successfully",
-    });
-    return tx;
-  } catch (error) {
-    console.error("Error depositing funds:", error);
-    toast({
-      title: "Error",
-      description: "Failed to deposit funds",
-      variant: "destructive",
-    });
-    throw error;
-  }
+    const res  = await fetch(`${API}/api/balance/${address}`);
+    const data = await res.json();
+    return data.layer2Balance || '0';
+  } catch { return '0'; }
 };
 
-// Withdraw funds from Layer 2
-export const withdrawFunds = async (amount: string) => {
+// ─── EIP-712 Transaction Signing ─────────────────────────────────────────────
+/**
+ * Sign an L2 transaction using EIP-712 (no gas required).
+ * The backend verifies this and includes in next batch.
+ */
+export const signL2Transaction = async (
+  from: string,
+  to: string,
+  amount: string,
+  nonce: number,
+  deadline?: number
+): Promise<{ signature: string; messageHash: string }> => {
+  const provider = await getProvider();
+  const signer   = await provider.getSigner();
+  const valueWei = parseEther(amount).toString();
+  const exp      = deadline || Math.floor(Date.now() / 1000) + 3600;
+
+  // Simple message hash (matches backend verification)
+  const msgHash = ethers.solidityPackedKeccak256(
+    ['address', 'address', 'uint256', 'uint256', 'uint256'],
+    [from, to, valueWei, nonce, exp]
+  );
+
+  const signature = await signer.signMessage(ethers.getBytes(msgHash));
+  return { signature, messageHash: msgHash };
+};
+
+// ─── Get Nonce ────────────────────────────────────────────────────────────────
+export const getNonce = async (address: string): Promise<number> => {
   try {
-    const contract = await getContract();
-    await ensureCorrectNetwork();
-    const tx = await contract.withdrawFunds(
-      parseEther(amount)
-    );
-    await tx.wait();
-    toast({
-      title: "Success",
-      description: "Withdrawal initiated successfully",
-    });
-    return tx;
-  } catch (error) {
-    console.error("Error withdrawing funds:", error);
-    toast({
-      title: "Error",
-      description: "Failed to withdraw funds",
-      variant: "destructive",
-    });
-    throw error;
-  }
+    const res  = await fetch(`${API}/api/nonce/${address}`);
+    const data = await res.json();
+    return data.nonce || 0;
+  } catch { return 0; }
 };
 
-// Execute a single Layer 2 transaction
+// ─── Execute L2 Transaction ───────────────────────────────────────────────────
 export const executeL2Transaction = async (recipient: string, amount: string) => {
   const provider = await getProvider();
-  const signer = await provider.getSigner();
-  const from = await signer.getAddress();
-  const nonce = await getNonce(from);
-  const valueWei = ethers.parseEther(amount);
-  //  create message hash
-const messageHash = ethers.solidityPackedKeccak256(
-  ["address", "address", "uint256", "uint256"],
-  [from, recipient, valueWei, nonce]
-);
+  const signer   = await provider.getSigner();
+  const from     = (await signer.getAddress()).toLowerCase();
+  const nonce    = await getNonce(from);
+  const valueWei = parseEther(amount).toString();
+  const deadline = Math.floor(Date.now() / 1000) + 3600;
 
-//  sign message
-const signature = await signer.signMessage(
-  ethers.getBytes(messageHash)
-);
+  const { signature } = await signL2Transaction(from, recipient, amount, nonce, deadline);
 
-const response = await fetch(
-  `${import.meta.env.VITE_API_URL || 'http://localhost:5500'}/api/transactions`,
-  {
+  const res = await fetch(`${API}/api/transactions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       transactions: [{
         from,
-        to: recipient,
-        valueWei: valueWei.toString(),
+        to:       recipient,
+        valueWei,
         nonce,
-        signature   // ✅ NEW
+        deadline,
+        signature,
       }]
     })
-  }
-);
+  });
 
-  if (!response.ok) {
-    const err = await response.json();
+  if (!res.ok) {
+    const err = await res.json();
     throw new Error(err.error || 'Transfer failed');
   }
 
-  const result = await response.json();
-
+  const result = await res.json();
   return {
-  hash: result.id || '0x0000',
-  status: 1,
-  wait: async () => ({
+    hash: result.transactions?.[0]?.id || '0x0000',
     status: 1,
-    transactionHash: result.id || '0x0000',
-  }),
-};
-};
-// Execute a batch of Layer 2 transactions
-export const executeL2BatchTransaction = async (recipients: string[], amounts: string[]) => {
-  if (recipients.length !== amounts.length) {
-    throw new Error('Recipients and amounts arrays must be the same length');
-  }
-
-  // Get current signer address
-  const provider = await getProvider();
-  const signer = await provider.getSigner();
-  const from = await signer.getAddress();
-
-  const transactions = recipients.map((to, i) => ({
-    from,
-    to,
-    amount: amounts[i],
-  }));
-
-  const response = await fetch(
-    `${import.meta.env.VITE_API_URL || 'http://localhost:5500'}/api/transactions`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transactions })
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.error || 'Batch transfer failed');
-  }
-
-  const result = await response.json();
-
-  return {
-    hash: result.id || '0x0000',
-    wait: async () => ({ status: 1 }),
+    wait: async () => ({ status: 1, transactionHash: result.transactions?.[0]?.id || '0x0000' }),
   };
 };
 
-// Alias for executeL2BatchTransaction for backward compatibility
-export const batchTransfer = executeL2BatchTransaction;
+// ─── Execute Batch L2 Transactions ────────────────────────────────────────────
+export const executeL2BatchTransaction = async (recipients: string[], amounts: string[]) => {
+  const provider = await getProvider();
+  const signer   = await provider.getSigner();
+  const from     = (await signer.getAddress()).toLowerCase();
+  let   nonce    = await getNonce(from);
 
-// Submit a batch with Merkle root
-
-
-// Verify a batch
-export const verifyBatch = async (batchId: bigint | number | string) => {
-  try {
-    const contract = await getContract();
-    if (!contract) {
-      throw new Error("Failed to get contract instance");
-    }
-
-    // Convert batchId to BigInt if it's not already
-    const numericBatchId = BigInt(batchId);
-
-    console.log(`Verifying batch with ID: ${numericBatchId}`);
-
-    // Verify the batch on-chain
-    await ensureCorrectNetwork();
-    const tx = await contract.verifyBatch(numericBatchId);
-    await tx.wait();
-
-    toast({
-      title: "Success",
-      description: "Batch verified successfully",
-    });
-    return tx;
-  } catch (error) {
-    console.error("Error verifying batch:", error);
-    toast({
-      title: "Error",
-      description: "Failed to verify batch: " + (error instanceof Error ? error.message : String(error)),
-      variant: "destructive",
-    });
-    throw error;
-  }
-};
-
-// Finalize a batch
-export const finalizeBatch = async (batchId: number) => {
-  try {
-    const contract = await getContract();
-    await ensureCorrectNetwork();
-    const tx = await contract.finalizeBatch(batchId);
-    await tx.wait();
-    toast({
-      title: "Success",
-      description: "Batch finalized successfully",
-    });
-    return tx;
-  } catch (error) {
-    console.error("Error finalizing batch:", error);
-    toast({
-      title: "Error",
-      description: "Failed to finalize batch",
-      variant: "destructive",
-    });
-    throw error;
-  }
-};
-export const getProvider = async () => {
-  if (!window.ethereum) {
-    throw new Error("MetaMask not found");
+  const transactions = [];
+  for (let i = 0; i < recipients.length; i++) {
+    const valueWei = parseEther(amounts[i]).toString();
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const { signature } = await signL2Transaction(from, recipients[i], amounts[i], nonce + i, deadline);
+    transactions.push({ from, to: recipients[i], valueWei, nonce: nonce + i, deadline, signature });
   }
 
-  return new ethers.BrowserProvider(window.ethereum);
-};
-// Report fraud with Merkle proof
-export const reportFraudWithMerkleProof = async (
-  batchId: string,
-  fraudProof: string,
-  merkleProof: string[]
-) => {
-  try {
-    const contract = await getContract();
-    await ensureCorrectNetwork();
-    const tx = await contract.reportFraud(batchId, fraudProof, merkleProof);
-    await tx.wait();
-    toast({
-      title: "Success",
-      description: "Fraud reported successfully",
-    });
-    return tx;
-  } catch (error) {
-    console.error("Error reporting fraud:", error);
-    toast({
-      title: "Error",
-      description: "Failed to report fraud",
-      variant: "destructive",
-    });
-    throw error;
-  }
-};
-export const ensureCorrectNetwork = async () => {
-  if (!window.ethereum) return;
-
-  const chainId = await window.ethereum.request({
-    method: "eth_chainId"
+  const res = await fetch(`${API}/api/transactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transactions })
   });
 
-  if (chainId !== "0x539") {
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: "0x539" }]
-    });
-  }
-};
-// Get Layer 1 balance
-export const getLayer1Balance = async (address: string): Promise<string> => {
-  try {
-    const provider = await getProvider();
-    const balance = await provider.getBalance(address);
-    return formatEther(balance);
-  } catch (error) {
-    console.error('Error getting Layer 1 balance:', error);
-    return '0';
-  }
+  if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Batch failed'); }
+  const result = await res.json();
+  return { hash: result.id || '0x0000', wait: async () => ({ status: 1 }) };
 };
 
-// Get Layer 2 balance
-export const getLayer2Balance = async (address: string) => {
-  const res = await fetch(`http://localhost:5500/api/balance/${address}`);
-  const data = await res.json();
-  return data.layer2Balance;
-};
+export const batchTransfer = executeL2BatchTransaction;
 
-// Format large numbers without scientific notation
-export function formatLargeNumber(value: string): string {
-  try {
-    const num = Number(value);
-    if (isNaN(num)) return "0.000000";
-
-    return new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: 6,
-      maximumFractionDigits: 6,
-      useGrouping: true,
-      notation: 'standard'
-    }).format(num);
-  } catch (error) {
-    console.error("Error formatting number:", error);
-    return "0.000000";
-  }
-}
-export const getNonce = async (address: string): Promise<number> => {
-  const res = await fetch(`${import.meta.env.VITE_API_URL}/api/nonce/${address}`);
-  const data = await res.json();
-  return data.nonce || 0;
-};
-// Get all batches (admin only)
-export const getBatches = async (): Promise<Batch[]> => {
-  try {
-    const contract = await getContract();
-    const nextBatchIdBN = await contract.nextBatchId();
-    const nextBatchId = Number(nextBatchIdBN);
-
-    const batchPromises = [];
-    for (let i = Math.max(0, nextBatchId - 10); i < nextBatchId; i++) {
-      batchPromises.push(
-        contract.batches(i)
-          .then(batch => ({
-            id: batch.batchId.toString(),
-            transactionsRoot: batch.transactionsRoot,
-            timestamp: batch.timestamp.toString(),
-            verified: batch.verified,
-            finalized: batch.finalized
-          }))
-          .catch(() => null)
-      );
-    }
-
-    const batches = await Promise.all(batchPromises);
-    return batches.filter(batch => batch !== null);
-  } catch (error) {
-    console.error("Error fetching batches:", error);
-    return [];
-  }
-};
-
-// Subscribe to events
-export const subscribeToEvents = async (callback: (event: any) => void) => {
+// ─── Deposit ──────────────────────────────────────────────────────────────────
+export const depositFunds = async (amount: string) => {
+  await ensureCorrectNetwork();
   const contract = await getContract();
-  contract.on("TransactionExecuted", callback);
-  contract.on("BatchSubmitted", callback);
-  contract.on("BatchVerified", callback);
-  contract.on("BatchFinalized", callback);
-  contract.on("FraudReported", callback);
+  const tx       = await contract.depositFunds({ value: parseEther(amount) });
+  await tx.wait();
+  toast({ title: "Deposited", description: `${amount} ETH bridged to L2` });
+  return tx;
 };
 
-// Unsubscribe from events
-export const unsubscribeFromEvents = async () => {
+// ─── Withdraw ─────────────────────────────────────────────────────────────────
+export const withdrawFunds = async (amount: string) => {
+  await ensureCorrectNetwork();
   const contract = await getContract();
-  contract.removeAllListeners();
+  const tx       = await contract.withdrawFunds(parseEther(amount));
+  await tx.wait();
+  toast({ title: "Withdrawn", description: `${amount} ETH withdrawn to L1` });
+  return tx;
 };
 
-// Determine network from chainId
-export const getNetworkName = (chainId: string | number): string => {
-  // Convert to hex string if it's a number
-  const hexChainId = typeof chainId === 'number'
-    ? `0x${chainId.toString(16)}`
-    : chainId;
-
-  switch (hexChainId) {
-    case NETWORK_SETTINGS.sepolia.chainId:
-      return "Sepolia";
-    case NETWORK_SETTINGS.localhost.chainId:
-      return "Hardhat";
-    default:
-      return `Chain ${parseInt(hexChainId, 16)}`;
-  }
+// ─── Fraud Proof (frontend helper) ───────────────────────────────────────────
+export const generateFraudProof = async (batchDbId: string, txIndex = 0) => {
+  const res  = await fetch(`${API}/api/fraud-proof/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ batchId: batchDbId, txIndex })
+  });
+  if (!res.ok) throw new Error('Failed to generate fraud proof');
+  return res.json();
 };
 
-// Connect to wallet
-export const connectWallet = async () => {
-  try {
-    if (!window.ethereum) {
-      throw new Error("MetaMask is not installed");
-    }
-
-    // Check if already connected
-    const accounts = await window.ethereum.request({
-      method: "eth_accounts"
-    });
-
-    if (accounts.length > 0) {
-      // Already connected
-      const chainId = await window.ethereum.request({ method: "eth_chainId" });
-      const networkName = getNetworkName(chainId);
-
-      localStorage.setItem('walletConnected', 'true');
-      localStorage.setItem('lastConnectedAddress', accounts[0]);
-
-      return {
-        address: accounts[0],
-        network: networkName
-      };
-    }
-
-    // Request new connection
-    const newAccounts = await window.ethereum.request({
-      method: "eth_requestAccounts"
-    });
-
-    if (newAccounts.length === 0) {
-      throw new Error("No accounts found");
-    }
-
-    // Get network information
-    const chainId = await window.ethereum.request({ method: "eth_chainId" });
-    const networkName = getNetworkName(chainId);
-
-    // Store connection state
-    localStorage.setItem('walletConnected', 'true');
-    localStorage.setItem('lastConnectedAddress', newAccounts[0]);
-
-    return {
-      address: newAccounts[0],
-      network: networkName
-    };
-  } catch (error) {
-    console.error("Wallet connection error:", error);
-    // Clear any stale connection state
-    localStorage.removeItem('walletConnected');
-    localStorage.removeItem('lastConnectedAddress');
-    throw error;
-  }
+export const submitFraudProofFromBackend = async (
+  batchDbId: string,
+  challengerAddress: string,
+  fraudProofData: any
+) => {
+  const res = await fetch(`${API}/api/fraud-proof/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      batchId: batchDbId,
+      challengerAddress,
+      ...fraudProofData.contractCallParams,
+    })
+  });
+  if (!res.ok) { const err = await res.json(); throw new Error(err.error); }
+  return res.json();
 };
 
-// Disconnect wallet
-export const disconnectWallet = async () => {
-  try {
-    // Clear stored connection state
-    localStorage.removeItem('walletConnected');
-    localStorage.removeItem('lastConnectedAddress');
-
-    // Remove event listeners
-    if (window.ethereum) {
-      window.ethereum.removeListener('chainChanged', () => { });
-      window.ethereum.removeListener('accountsChanged', () => { });
-    }
-
-    // Request MetaMask to forget this site's permissions
-    if (window.ethereum?.request) {
-      try {
-        await window.ethereum.request({
-          method: "wallet_revokePermissions",
-          params: [{ eth_accounts: {} }]
-        });
-      } catch (revokeError) {
-        console.warn("Could not revoke permissions:", revokeError);
-      }
-    }
-
-    // Reload page to reset state
-    window.location.reload();
-  } catch (error) {
-    console.error("Wallet disconnection error:", error);
-    // Force reload even if there's an error
-    window.location.reload();
-  }
-};
-
-// Get current gas price
-export const getGasPrice = async () => {
-  try {
-    const provider = await getProvider();
-    const chainId = await provider.send('eth_chainId', []);
-
-    try {
-      // First try using eth_gasPrice
-      const gasPrice = await provider.send('eth_gasPrice', []);
-      if (gasPrice) {
-        return gasPrice; // Return the raw hex value
-      }
-    } catch (rpcError) {
-      console.warn('Failed to get gas price via eth_gasPrice');
-    }
-
-    // If eth_gasPrice fails, use getFeeData
-    const feeData = await provider.getFeeData();
-    if (feeData.gasPrice) {
-      return feeData.gasPrice.toString(16); // Convert to hex
-    }
-
-    // Default values based on network
-    if (chainId === NETWORK_SETTINGS.sepolia.chainId) {
-      return "0x38D7EA4C68000"; // ~1.5 Gwei in hex
-    } else if (chainId === NETWORK_SETTINGS.localhost.chainId) {
-      return "0x4A817C800"; // 1 Gwei in hex
-    }
-
-    return "0x0";
-  } catch (error) {
-    console.error("Error getting gas price:", error);
-    return "0x0";
-  }
-};
-
-// Switch network
-export const switchNetwork = async (networkName: "sepolia" | "localhost") => {
-  try {
-    const network = NETWORK_SETTINGS[networkName];
-
-    try {
-      // First try to switch
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: network.chainId }],
-      });
-    } catch (switchError: any) {
-      // This error code indicates that the chain has not been added to MetaMask
-      if (switchError.code === 4902) {
-        await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [{
-            chainId: network.chainId,
-            chainName: network.chainName,
-            nativeCurrency: network.nativeCurrency,
-            rpcUrls: network.rpcUrls,
-            blockExplorerUrls: network.blockExplorerUrls
-          }],
-        });
-      } else {
-        throw switchError;
-      }
-    }
-
-    // Wait a bit for MetaMask to update
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // Verify we're on the correct network
-    const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-    if (currentChainId !== network.chainId) {
-      throw new Error('Failed to switch network');
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error switching network:", error);
-    toast({
-      title: "Network Switch Failed",
-      description: "Please manually switch to " + networkName + " network in MetaMask",
-      variant: "destructive",
-    });
-    return false;
-  }
-};
-
-// Track contract deployment
-const trackContractDeployment = async (address: string, network: string) => {
-  try {
-    // Use fetch API to update contract deployment
-    const response = await fetch('http://localhost:5500/api/contract/deployment', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ address, network }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to track contract deployment: ${response.statusText}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error tracking contract deployment:', error);
-    throw error;
-  }
-};
-
-// Update Layer 2 balance in database via API
-const updateLayer2Balance = async (userAddress: string, contractAddress: string, balance: string) => {
-  try {
-    const response = await fetch('http://localhost:5500/api/balance/update', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        userAddress,
-        contractAddress,
-        balance
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error('Balance update failed:', errorData);
-      throw new Error(`Failed to update balance: ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error updating Layer 2 balance:', error);
-    throw error;
-  }
-};
-
-// Check if an address is an admin
+// ─── Admin ────────────────────────────────────────────────────────────────────
 export const isAdmin = async (address: string): Promise<boolean> => {
   try {
-    const contract = await getContract();
-
-    // Only check admin() function
-    try {
-      const adminAddress = await contract.admin();
-      return adminAddress.toLowerCase() === address.toLowerCase();
-    } catch (error) {
-      console.warn("admin() check failed:", error);
-
-      // For development, allow hardcoded admin address
-      
-      return false;
-    }
-  } catch (error) {
-    console.error("Error checking admin status:", error);
-
-    // For development, allow hardcoded admin address
-    if (process.env.NODE_ENV === 'development') {
-      const hardcodedAdmin = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
-      return address.toLowerCase() === hardcodedAdmin.toLowerCase();
-    }
-    return false;
-  }
+    const res  = await fetch(`${API}/api/admin/check?address=${address}`);
+    const data = await res.json();
+    return data.isAdmin || false;
+  } catch { return false; }
 };
 
-// Add an operator (admin only)
 export const addOperator = async (operatorAddress: string) => {
-  try {
-    const contract = await getContract();
-    await ensureCorrectNetwork();
-    const tx = await contract.addOperator(operatorAddress);
-    await tx.wait();
-  } catch (error) {
-    console.error("Error adding operator:", error);
-    throw error;
-  }
+  await ensureCorrectNetwork();
+  const contract = await getContract();
+  const tx = await contract.addOperator(operatorAddress);
+  await tx.wait();
 };
 
-// Remove an operator (admin only)
 export const removeOperator = async (operatorAddress: string) => {
-  try {
-    const contract = await getContract();
-    await ensureCorrectNetwork();
-    const tx = await contract.removeOperator(operatorAddress);
-    await tx.wait();
-  } catch (error) {
-    console.error("Error removing operator:", error);
-    throw error;
-  }
+  await ensureCorrectNetwork();
+  const contract = await getContract();
+  const tx = await contract.removeOperator(operatorAddress);
+  await tx.wait();
 };
 
-// Check if an address is an operator
 export const isOperator = async (address: string): Promise<boolean> => {
   try {
     const contract = await getContract();
-    await ensureCorrectNetwork();
     return await contract.isOperator(address);
-  } catch (error) {
-    console.error("Error checking operator status:", error);
-    return false;
-  }
+  } catch { return false; }
 };
 
-interface TransactionExecutedLog extends Log {
-  args?: [string, string, bigint, bigint, bigint]; // [from, to, value, timestamp, batchId]
-}
-
-export async function getBatchTransactions(batchId: string) {
+// ─── Batches ──────────────────────────────────────────────────────────────────
+export const getBatches = async () => {
   try {
-    const contract = await getContract();
+    const res = await fetch(`${API}/api/batches`);
+    return res.ok ? res.json() : [];
+  } catch { return []; }
+};
 
-    // Get batch events
-    const filter = contract.filters.TransactionExecuted();
-    await ensureCorrectNetwork();
-    const events = await contract.queryFilter(filter) as TransactionExecutedLog[];
+export const getBatchTransactions = async (batchId: string) => {
+  try {
+    const res = await fetch(`${API}/api/batches/${batchId}`);
+    if (!res.ok) return [];
+    const batch = await res.json();
+    return batch.transactions || [];
+  } catch { return []; }
+};
 
-    // Filter events for the specific batch
-    const batchTransactions = events
-      .filter(event => event.args?.[4].toString() === batchId)
-      .map(event => {
-        if (!event.args) return null;
-        const [from, to, value, timestamp] = event.args;
-        return {
-          from,
-          to,
-          value: ethers.formatEther(value),
-          status: "confirmed",
-          timestamp: Number(timestamp)
-        };
-      })
-      .filter((tx): tx is NonNullable<typeof tx> => tx !== null);
+export const verifyBatch = async () => { /* handled by sequencer */ };
+export const finalizeBatch = async () => { /* handled by auto-finalizer */ };
+export const reportFraudWithMerkleProof = async () => { /* use submitFraudProofFromBackend */ };
 
-    return batchTransactions;
-  } catch (error) {
-    console.error("Error fetching batch transactions:", error);
-    return [];
+// ─── Gas Price ────────────────────────────────────────────────────────────────
+export const getGasPrice = async (): Promise<string> => {
+  try {
+    const provider = await getProvider();
+    const fee      = await provider.getFeeData();
+    return fee.gasPrice ? `0x${fee.gasPrice.toString(16)}` : '0x0';
+  } catch { return '0x0'; }
+};
+
+// ─── Wallet ───────────────────────────────────────────────────────────────────
+export const connectWallet = async () => {
+  if (!window.ethereum) throw new Error("MetaMask is not installed");
+
+  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  if (!accounts.length) throw new Error("No accounts found");
+
+  const chainId    = await window.ethereum.request({ method: "eth_chainId" });
+  const network    = getNetworkName(chainId);
+
+  localStorage.setItem('walletConnected', 'true');
+  localStorage.setItem('lastConnectedAddress', accounts[0]);
+
+  return { address: accounts[0], network };
+};
+
+export const disconnectWallet = async () => {
+  localStorage.removeItem('walletConnected');
+  localStorage.removeItem('lastConnectedAddress');
+  if (window.ethereum?.request) {
+    try {
+      await window.ethereum.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] });
+    } catch {}
   }
-}
-
-
+  window.location.reload();
+};

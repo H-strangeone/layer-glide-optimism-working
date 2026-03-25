@@ -23,7 +23,10 @@ CREATE TABLE "ContractDeployment" (
 CREATE TABLE "Batch" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "onChainId" TEXT,
-    "transactionsRoot" TEXT NOT NULL,
+    "stateRoot" TEXT,
+    "prevStateRoot" TEXT,
+    "txRoot" TEXT,
+    "transactionsRoot" TEXT NOT NULL DEFAULT '',
     "status" TEXT NOT NULL DEFAULT 'pending_submission',
     "submitter" TEXT,
     "submittedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -66,24 +69,46 @@ CREATE TABLE "Challenge" (
 );
 
 -- CreateTable
+CREATE TABLE "Layer2Balance" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userAddress" TEXT NOT NULL,
+    "contractAddress" TEXT NOT NULL,
+    "balanceWei" TEXT NOT NULL DEFAULT '0',
+    "pendingBalanceWei" TEXT NOT NULL DEFAULT '0',
+    "isFinalized" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+);
+
+-- CreateTable
+CREATE TABLE "StateSnapshot" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "batchId" TEXT NOT NULL,
+    "stateRoot" TEXT NOT NULL,
+    "prevStateRoot" TEXT NOT NULL,
+    "entriesJson" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "StateSnapshot_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "Batch" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateTable
 CREATE TABLE "Balance" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "address" TEXT NOT NULL,
     "layer1BalanceWei" TEXT NOT NULL DEFAULT '0',
     "layer2BalanceWei" TEXT NOT NULL DEFAULT '0',
+    "pendingWei" TEXT NOT NULL DEFAULT '0',
     "lastSyncedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );
 
 -- CreateTable
-CREATE TABLE "Layer2Balance" (
+CREATE TABLE "Nonce" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "userAddress" TEXT NOT NULL,
     "contractAddress" TEXT NOT NULL,
-    "balanceWei" TEXT NOT NULL DEFAULT '0',
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "currentNonce" INTEGER NOT NULL DEFAULT 0
 );
 
 -- CreateTable
@@ -100,11 +125,16 @@ CREATE TABLE "GasAnalytics" (
 );
 
 -- CreateTable
-CREATE TABLE "Nonce" (
+CREATE TABLE "WithdrawalRequest" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "userAddress" TEXT NOT NULL,
-    "contractAddress" TEXT NOT NULL,
-    "currentNonce" INTEGER NOT NULL DEFAULT 0
+    "amount" TEXT NOT NULL,
+    "stateRoot" TEXT NOT NULL,
+    "proofJson" TEXT NOT NULL,
+    "processed" BOOLEAN NOT NULL DEFAULT false,
+    "onChainId" TEXT,
+    "requestedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "processedAt" DATETIME
 );
 
 -- CreateIndex
@@ -121,6 +151,9 @@ CREATE INDEX "Batch_status_idx" ON "Batch"("status");
 
 -- CreateIndex
 CREATE INDEX "Batch_onChainId_idx" ON "Batch"("onChainId");
+
+-- CreateIndex
+CREATE INDEX "Batch_stateRoot_idx" ON "Batch"("stateRoot");
 
 -- CreateIndex
 CREATE INDEX "PendingTransaction_fromAddress_idx" ON "PendingTransaction"("fromAddress");
@@ -141,13 +174,25 @@ CREATE INDEX "Challenge_batchId_idx" ON "Challenge"("batchId");
 CREATE INDEX "Challenge_status_idx" ON "Challenge"("status");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Balance_address_key" ON "Balance"("address");
-
--- CreateIndex
 CREATE INDEX "Layer2Balance_userAddress_idx" ON "Layer2Balance"("userAddress");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Layer2Balance_userAddress_contractAddress_key" ON "Layer2Balance"("userAddress", "contractAddress");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "StateSnapshot_batchId_key" ON "StateSnapshot"("batchId");
+
+-- CreateIndex
+CREATE INDEX "StateSnapshot_stateRoot_idx" ON "StateSnapshot"("stateRoot");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Balance_address_key" ON "Balance"("address");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Nonce_userAddress_contractAddress_key" ON "Nonce"("userAddress", "contractAddress");
+
+-- CreateIndex
+CREATE INDEX "WithdrawalRequest_userAddress_idx" ON "WithdrawalRequest"("userAddress");
+
+-- CreateIndex
+CREATE INDEX "WithdrawalRequest_processed_idx" ON "WithdrawalRequest"("processed");

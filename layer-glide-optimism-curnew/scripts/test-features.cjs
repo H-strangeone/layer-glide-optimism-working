@@ -1,84 +1,50 @@
 const hre = require("hardhat");
-const { ethers } = require("hardhat");
 
 async function main() {
-    console.log("Testing Layer 2 features...");
+  console.log("=== Deploying LayerGlide Production Rollup ===");
+  
+  const [deployer] = await hre.ethers.getSigners();
+  console.log(`Deployer: ${deployer.address}`);
+  console.log(`Balance: ${hre.ethers.formatEther(await deployer.getBalance())} ETH`);
 
-    // Get test accounts
-    const [admin, operator, user1] = await hre.ethers.getSigners();
-    console.log("\nAccounts:");
-    console.log(`Admin: ${admin.address}`);
-    console.log(`Operator: ${operator.address}`);
-    console.log(`User1: ${user1.address}`);
+  // Challenge period: 5 minutes for demo (300s), 7 days for production (604800s)
+  const CHALLENGE_PERIOD = 300; // 5 minutes for demo
+  console.log(`Challenge period: ${CHALLENGE_PERIOD}s`);
 
-    // Get the deployed contract
-    const Layer2Scaling = await hre.ethers.getContractFactory("Layer2Scaling");
-    const layer2Scaling = await Layer2Scaling.deploy();
-    await layer2Scaling.waitForDeployment();
-    console.log(`\nContract deployed to: ${await layer2Scaling.getAddress()}`);
+  const Layer2Rollup = await hre.ethers.getContractFactory("Layer2Rollup");
+  const rollup = await Layer2Rollup.deploy(CHALLENGE_PERIOD);
+  await rollup.waitForDeployment();
 
-    // Test 1: Admin Role
-    console.log("\n1. Testing Admin Functions:");
-    console.log("-------------------------");
-    const adminAddress = await layer2Scaling.admin();
-    console.log(`Contract Admin: ${adminAddress}`);
-    console.log(`Is admin correct? ${adminAddress === admin.address}`);
+  const addr = await rollup.getAddress();
+  console.log(`\n✅ Layer2Rollup deployed to: ${addr}`);
 
-    // Test 2: Add Operator
-    console.log("\n2. Testing Operator Management:");
-    console.log("-----------------------------");
-    await layer2Scaling.addOperator(operator.address);
-    const isOperator = await layer2Scaling.isOperator(operator.address);
-    console.log(`Is operator added? ${isOperator}`);
+  // Verify state
+  const admin = await rollup.admin();
+  const stateRoot = await rollup.currentStateRoot();
+  const domain = await rollup.DOMAIN_SEPARATOR();
+  
+  console.log(`   Admin: ${admin}`);
+  console.log(`   Genesis state root: ${stateRoot}`);
+  console.log(`   EIP-712 domain: ${domain.slice(0, 20)}...`);
 
-    // Test 3: Deposit Funds
-    console.log("\n3. Testing Deposits:");
-    console.log("------------------");
-    const depositAmount = ethers.parseEther("1.0");
-    const depositTx = await layer2Scaling.connect(user1).depositFunds({ value: depositAmount });
-    await depositTx.wait();
-    const balance = await layer2Scaling.balances(user1.address);
-    console.log(`User1 L2 balance: ${ethers.formatEther(balance)} ETH`);
+  console.log(`
+=== UPDATE THESE FILES ===
+1. .env:
+   CONTRACT_ADDRESS="${addr}"
+   VITE_CONTRACT_ADDRESS="${addr}"
 
-    // Test 4: Submit Batch
-    console.log("\n4. Testing Batch Submission:");
-    console.log("--------------------------");
-    const transactionRoot = ethers.keccak256(ethers.toUtf8Bytes("test transaction"));
-    const batchTx = await layer2Scaling.connect(operator).submitBatch([transactionRoot]);
-    await batchTx.wait();
-    const nextBatchId = await layer2Scaling.nextBatchId();
-    console.log(`Next batch ID: ${nextBatchId}`);
+2. src/config/contract.ts:
+   export const CONTRACT_ADDRESS = '${addr}';
 
-    // Test 5: Verify Batch
-    console.log("\n5. Testing Batch Verification:");
-    console.log("----------------------------");
-    const verifyTx = await layer2Scaling.verifyBatch(1);
-    await verifyTx.wait();
-    const batch = await layer2Scaling.batches(1);
-    console.log(`Batch verified: ${batch.verified}`);
-
-    // Test 6: Withdraw Funds
-    console.log("\n6. Testing Withdrawals:");
-    console.log("---------------------");
-    const withdrawAmount = ethers.parseEther("0.5");
-    const withdrawTx = await layer2Scaling.connect(user1).withdrawFunds(withdrawAmount);
-    await withdrawTx.wait();
-    const newBalance = await layer2Scaling.balances(user1.address);
-    console.log(`User1 L2 balance after withdrawal: ${ethers.formatEther(newBalance)} ETH`);
-
-    console.log("\nAll tests completed!");
-    console.log("\nTo interact with these features in the UI:");
-    console.log("1. Import these accounts to MetaMask:");
-    console.log("   Admin: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-    console.log("   Operator: 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
-    console.log("2. Use Admin account to manage operators");
-    console.log("3. Use Operator account to submit and verify batches");
-    console.log("4. Use any account to deposit and withdraw funds");
+=== QUICK TEST ===
+# Deposit 1 ETH as deployer
+npx hardhat console --network localhost
+> const c = await ethers.getContractAt("Layer2Rollup", "${addr}")
+> await c.depositFunds({ value: ethers.parseEther("1.0") })
+> await c.l1Balances(deployer.address) // should show 1 ETH in wei
+`);
 }
 
 main()
-    .then(() => process.exit(0))
-    .catch((error) => {
-        console.error(error);
-        process.exit(1);
-    }); 
+  .then(() => process.exit(0))
+  .catch(err => { console.error(err); process.exit(1); });
