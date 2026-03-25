@@ -1,88 +1,51 @@
-// import hardhat from "hardhat";
-
-// const { ethers, network } = hardhat;
-
-// async function main() {
-//   console.log("------------------------------------------------------------------------");
-//   console.log("Deploying Layer2Scaling contract to", network.name, "network...");
-
-//   // Deploy the contract
-//   const Layer2Scaling = await ethers.getContractFactory("Layer2Scaling");
-//   const layer2Scaling = await Layer2Scaling.deploy();
-
-//   await layer2Scaling.deployed();
-
-//   console.log(`Layer2Scaling deployed to: ${layer2Scaling.address}`);
-//   console.log("");
-//   console.log("IMPORTANT: Update the CONTRACT_ADDRESS in src/lib/ethers.ts with:");
-//   console.log(`  ${network.name}: "${layer2Scaling.address}",`);
-//   console.log("------------------------------------------------------------------------");
-// }
-
-// main()
-//   .then(() => process.exit(0))
-//   .catch((error) => {
-//     console.error(error);
-//     process.exit(1);
-//   });
-// const hre = require("hardhat");
-
-// async function main() {
-//   console.log("------------------------------------------------------------------------");
-//   console.log("Deploying Layer2Scaling contract to", hre.network.name, "network...");
-
-//   // Deploy the contract
-//   const Layer2Scaling = await hre.ethers.getContractFactory("Layer2Scaling");
-//   const layer2Scaling = await Layer2Scaling.deploy();
-
-//   await layer2Scaling.waitForDeployment();
-
-
-//   console.log(`Layer2Scaling deployed to: ${layer2Scaling.address}`);
-//   console.log("");
-//   console.log("IMPORTANT: Update the CONTRACT_ADDRESS in src/lib/ethers.ts with:");
-//   console.log(`  ${hre.network.name}: "${layer2Scaling.address}",`);
-//   console.log("------------------------------------------------------------------------");
-// }
-
-// main()
-//   .then(() => process.exit(0))
-//   .catch((error) => {
-//     console.error(error);
-//     process.exit(1);
-//   });
 const hre = require("hardhat");
 
 async function main() {
-  console.log("------------------------------------------------------------------------");
-  console.log("Deploying Layer2Scaling contract to", hre.network.name, "network...");
-
-  // Get the deployer account
+  console.log("=== Deploying LayerGlide Production Rollup ===");
+  
   const [deployer] = await hre.ethers.getSigners();
-  console.log("Deploying with account:", deployer.address);
+  console.log(`Deployer: ${deployer.address}`);
+  const balance = await hre.ethers.provider.getBalance(deployer.address);
+console.log(`Balance: ${hre.ethers.formatEther(balance)} ETH`);
 
-  // Deploy the contract
-  const Layer2Scaling = await hre.ethers.getContractFactory("Layer2Scaling");
-  const layer2Scaling = await Layer2Scaling.deploy(300);
+  // Challenge period: 5 minutes for demo (300s), 7 days for production (604800s)
+  const CHALLENGE_PERIOD = 300; // 5 minutes for demo
+  console.log(`Challenge period: ${CHALLENGE_PERIOD}s`);
 
-  await layer2Scaling.waitForDeployment();
+  const Layer2Rollup = await hre.ethers.getContractFactory("Layer2Rollup");
+  const rollup = await Layer2Rollup.deploy(CHALLENGE_PERIOD);
+  await rollup.waitForDeployment();
 
-  const contractAddress = await layer2Scaling.getAddress();
-  console.log(`Layer2Scaling deployed to: ${contractAddress}`);
+  const addr = await rollup.getAddress();
+  console.log(`\n✅ Layer2Rollup deployed to: ${addr}`);
 
-  console.log("");
-  console.log("IMPORTANT: Update these files with the new contract address:");
-  console.log("1. .env file:");
-  console.log(`   CONTRACT_ADDRESS="${contractAddress}"`);
-  console.log(`   VITE_CONTRACT_ADDRESS="${contractAddress}"`);
-  console.log("2. src/lib/ethers.ts:");
-  console.log(`   ${hre.network.name}: "${contractAddress}",`);
-  console.log("------------------------------------------------------------------------");
+  // Verify state
+  const admin = await rollup.admin();
+  const stateRoot = await rollup.currentStateRoot();
+  const domain = await rollup.DOMAIN_SEPARATOR();
+  
+  console.log(`   Admin: ${admin}`);
+  console.log(`   Genesis state root: ${stateRoot}`);
+  console.log(`   EIP-712 domain: ${domain.slice(0, 20)}...`);
+
+  console.log(`
+=== UPDATE THESE FILES ===
+1. .env:
+   CONTRACT_ADDRESS="${addr}"
+   VITE_CONTRACT_ADDRESS="${addr}"
+
+2. src/config/contract.ts:
+   export const CONTRACT_ADDRESS = '${addr}';
+
+=== QUICK TEST ===
+# Deposit 1 ETH as deployer
+npx hardhat console --network localhost
+> const c = await ethers.getContractAt("Layer2Rollup", "${addr}")
+> await c.depositFunds({ value: ethers.parseEther("1.0") })
+> await c.l1Balances(deployer.address) // should show 1 ETH in wei
+`);
 }
 
 main()
   .then(() => process.exit(0))
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  .catch(err => { console.error(err); process.exit(1); });

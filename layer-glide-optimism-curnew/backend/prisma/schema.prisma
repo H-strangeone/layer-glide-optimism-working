@@ -17,19 +17,21 @@ model Operator {
 }
 
 model ContractDeployment {
-  id         String   @id @default(uuid())
-  address    String   @unique
-  network    String
-  chainId    String   @default("1337")
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(uuid())
+  address   String   @unique
+  network   String
+  chainId   String   @default("1337")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Batch {
   id               String    @id @default(uuid())
   onChainId        String?   @unique
-  transactionsRoot String
+  transactionsRoot String    // TX Merkle root
+  stateRoot        String?   // Post-execution state root
+  prevStateRoot    String?   // Pre-execution state root (links chain)
   status           String    @default("pending_submission")
   submitter        String?
   submittedAt      DateTime  @default(now())
@@ -38,6 +40,8 @@ model Batch {
   onChainTxHash    String?
   transactions     PendingTransaction[]
   challenges       Challenge[]
+  stateSnapshots   StateSnapshot[]
+  withdrawalRequests WithdrawalRequest[]
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -52,6 +56,7 @@ model PendingTransaction {
   valueWei    String
   nonce       Int      @default(0)
   signature   String?
+  deadline    Int?
   status      String   @default("pending")
   batchId     String?
   batch       Batch?   @relation(fields: [batchId], references: [id])
@@ -71,7 +76,8 @@ model Challenge {
   challengerAddress String
   fraudProofHash    String
   merkleProof       String
-  status            String    @default("pending")
+  correctStateRoot  String?
+  status            String    @default("pending")  // pending | accepted | rejected
   rewardWei         String?
   resolvedAt        DateTime?
   onChainTxHash     String?
@@ -79,6 +85,39 @@ model Challenge {
   updatedAt         DateTime  @updatedAt
 
   @@index([batchId])
+  @@index([status])
+}
+
+// State snapshot for fraud proof reconstruction
+model StateSnapshot {
+  id              String   @id @default(uuid())
+  batchId         String
+  batch           Batch    @relation(fields: [batchId], references: [id])
+  userAddress     String
+  balanceWei      String
+  snapshotType    String   @default("pre")  // pre | post
+  createdAt       DateTime @default(now())
+
+  @@index([batchId])
+  @@index([userAddress])
+}
+
+// Withdrawal requests via Merkle proof
+model WithdrawalRequest {
+  id               String    @id @default(uuid())
+  batchId          String?
+  batch            Batch?    @relation(fields: [batchId], references: [id])
+  userAddress      String
+  amountWei        String
+  withdrawalNonce  Int
+  merkleProof      String    // JSON array
+  withdrawalRoot   String
+  status           String    @default("pending")  // pending | submitted | completed
+  onChainTxHash    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userAddress])
   @@index([status])
 }
 
@@ -115,6 +154,7 @@ model GasAnalytics {
   blockNumber       Int
   createdAt         DateTime @default(now())
 }
+
 model Nonce {
   id              String   @id @default(uuid())
   userAddress     String
