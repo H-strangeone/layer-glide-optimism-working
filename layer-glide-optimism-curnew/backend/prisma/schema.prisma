@@ -1,3 +1,6 @@
+// LayerGlide Prisma Schema
+// Two-layer state: balanceWei (pending) vs pendingBalanceWei (finalized — naming kept for DB compat)
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -29,9 +32,13 @@ model ContractDeployment {
 model Batch {
   id               String    @id @default(uuid())
   onChainId        String?   @unique
-  transactionsRoot String    // TX Merkle root
-  stateRoot        String?   // Post-execution state root
-  prevStateRoot    String?   // Pre-execution state root (links chain)
+  // TX Merkle root (hash of all tx leaves)
+  transactionsRoot String    @default("")
+  // State root AFTER executing this batch
+  stateRoot        String?
+  // State root BEFORE executing this batch (links the chain)
+  prevStateRoot    String?
+  // status: pending_submission | challenge_period | finalized | rejected | failed
   status           String    @default("pending_submission")
   submitter        String?
   submittedAt      DateTime  @default(now())
@@ -47,6 +54,7 @@ model Batch {
 
   @@index([status])
   @@index([onChainId])
+  @@index([stateRoot])
 }
 
 model PendingTransaction {
@@ -57,6 +65,7 @@ model PendingTransaction {
   nonce       Int      @default(0)
   signature   String?
   deadline    Int?
+  // status: pending | processing | batched | finalized | rejected | failed
   status      String   @default("pending")
   batchId     String?
   batch       Batch?   @relation(fields: [batchId], references: [id])
@@ -75,9 +84,10 @@ model Challenge {
   batch             Batch     @relation(fields: [batchId], references: [id])
   challengerAddress String
   fraudProofHash    String
-  merkleProof       String
+  merkleProof       String    // JSON array
   correctStateRoot  String?
-  status            String    @default("pending")  // pending | accepted | rejected
+  // status: pending | accepted | rejected
+  status            String    @default("pending")
   rewardWei         String?
   resolvedAt        DateTime?
   onChainTxHash     String?
@@ -88,37 +98,52 @@ model Challenge {
   @@index([status])
 }
 
-// State snapshot for fraud proof reconstruction
 model StateSnapshot {
-  id              String   @id @default(uuid())
-  batchId         String
-  batch           Batch    @relation(fields: [batchId], references: [id])
-  userAddress     String
-  balanceWei      String
-  snapshotType    String   @default("pre")  // pre | post
-  createdAt       DateTime @default(now())
+  id           String   @id @default(uuid())
+  batchId      String
+  batch        Batch    @relation(fields: [batchId], references: [id])
+  userAddress  String
+  balanceWei   String
+  // pre = before batch, post = after batch
+  snapshotType String   @default("pre")
+  createdAt    DateTime @default(now())
 
   @@index([batchId])
   @@index([userAddress])
 }
 
-// Withdrawal requests via Merkle proof
 model WithdrawalRequest {
-  id               String    @id @default(uuid())
-  batchId          String?
-  batch            Batch?    @relation(fields: [batchId], references: [id])
-  userAddress      String
-  amountWei        String
-  withdrawalNonce  Int
-  merkleProof      String    // JSON array
-  withdrawalRoot   String
-  status           String    @default("pending")  // pending | submitted | completed
-  onChainTxHash    String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id              String    @id @default(uuid())
+  batchId         String?
+  batch           Batch?    @relation(fields: [batchId], references: [id])
+  userAddress     String
+  amountWei       String
+  withdrawalNonce Int
+  merkleProof     String    // JSON array
+  withdrawalRoot  String
+  // status: pending | submitted | completed
+  status          String    @default("pending")
+  onChainTxHash   String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([userAddress])
   @@index([status])
+}
+
+model Layer2Balance {
+  id              String   @id @default(uuid())
+  userAddress     String
+  contractAddress String
+  // PENDING balance: updated on every L2 tx (optimistic)
+  balanceWei      String   @default("0")
+  // FINALIZED balance: updated only after batch finalization
+  pendingBalanceWei String  @default("0")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userAddress, contractAddress])
+  @@index([userAddress])
 }
 
 model Balance {
@@ -126,21 +151,19 @@ model Balance {
   address          String   @unique
   layer1BalanceWei String   @default("0")
   layer2BalanceWei String   @default("0")
+  pendingWei       String   @default("0")
   lastSyncedAt     DateTime @default(now())
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
 
-model Layer2Balance {
-  id              String   @id @default(uuid())
+model Nonce {
+  id              String @id @default(uuid())
   userAddress     String
   contractAddress String
-  balanceWei      String   @default("0")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  currentNonce    Int    @default(0)
 
   @@unique([userAddress, contractAddress])
-  @@index([userAddress])
 }
 
 model GasAnalytics {
@@ -153,13 +176,4 @@ model GasAnalytics {
   gasPrice          String
   blockNumber       Int
   createdAt         DateTime @default(now())
-}
-
-model Nonce {
-  id              String   @id @default(uuid())
-  userAddress     String
-  contractAddress String
-  currentNonce    Int      @default(0)
-
-  @@unique([userAddress, contractAddress])
 }

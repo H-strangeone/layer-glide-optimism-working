@@ -1,16 +1,21 @@
+/**
+ * Sequencer
+ *
+ * Collects pending txs, simulates execution, submits batch on-chain.
+ * Does NOT finalize balances — that happens via BatchFinalized event.
+ */
+
 import { ethers } from 'ethers';
 
-const BATCH_SIZE    = 20;
-const INTERVAL_MS   = 10_000; // 10 seconds
-const MIN_BATCH     = 1;      // For demo: batch even 1 tx
+const BATCH_SIZE  = 20;
+const INTERVAL_MS = 10_000; // 10 seconds
+const MIN_BATCH   = 1;       // batch even 1 tx for demo; raise to 5+ for prod
 
 export function startSequencer({ contract, wallet, broadcast, stateManager, prisma }) {
   if (!contract || !wallet) {
-    console.log('⚠️ Sequencer: no contract — polling only (DB mode)');
-    // Still run in DB-only mode so batch records are created
+    console.log('⚠️  Sequencer: no contract — DB-only mode (batches won\'t go on-chain)');
   }
-
-  console.log('🚀 Sequencer started');
+  console.log(`🚀 Sequencer started (interval: ${INTERVAL_MS}ms, min: ${MIN_BATCH} txs)`);
 
   setInterval(async () => {
     let txIds = [];
@@ -21,26 +26,23 @@ export function startSequencer({ contract, wallet, broadcast, stateManager, pris
         take: BATCH_SIZE,
       });
 
-      if (pending.length < MIN_BATCH) {
-        if (pending.length > 0) console.log(`⏳ Waiting... ${pending.length} pending`);
-        return;
-      }
+      if (pending.length < MIN_BATCH) return;
 
       console.log(`📦 Building batch: ${pending.length} txs`);
       txIds = pending.map(t => t.id);
 
-      // Mark as processing
+      // Mark as processing (prevents double-batching)
       await prisma.pendingTransaction.updateMany({
         where: { id: { in: txIds } }, data: { status: 'processing' }
       });
 
-      // Execute state transition
-      const { preStateRoot, txRoot, postStateRoot, txLeaves } = await stateManager.executeBatch(pending);
+      // Execute state transition (off-chain simulation)
+      const { preStateRoot, txRoot, postStateRoot } = await stateManager.executeBatch(pending);
 
-      // Create batch record
+      // Create DB batch record
       const batch = await prisma.batch.create({
         data: {
-          transactionsRoot: txRoot,    // TX root
+          transactionsRoot: txRoot,
           stateRoot:        postStateRoot,
           prevStateRoot:    preStateRoot,
           status:           'pending_submission',
@@ -48,13 +50,11 @@ export function startSequencer({ contract, wallet, broadcast, stateManager, pris
         }
       });
 
-      // Link transactions
+      // Link txs to batch
       await prisma.pendingTransaction.updateMany({
         where: { id: { in: txIds } },
         data: { batchId: batch.id, status: 'batched' }
       });
-
-      console.log(`🧱 Batch created in DB: ${batch.id}`);
 
       // Submit to chain
       if (contract && wallet) {
@@ -75,8 +75,7 @@ export function startSequencer({ contract, wallet, broadcast, stateManager, pris
         let onChainId = null;
         for (const log of receipt.logs) {
           try {
-            const iface = contract.interface;
-            const parsed = iface.parseLog(log);
+            const parsed = contract.interface.parseLog(log);
             if (parsed.name === 'BatchSubmitted') {
               onChainId = parsed.args.batchId.toString();
               break;
@@ -85,19 +84,18 @@ export function startSequencer({ contract, wallet, broadcast, stateManager, pris
         }
 
         if (!onChainId) {
-          console.error('❌ BatchSubmitted event not found');
+          console.error('❌ BatchSubmitted event not found in receipt');
           return;
         }
 
-        // Check for duplicate
-        const existing = await prisma.batch.findUnique({ where: { onChainId } });
-        if (existing && existing.id !== batch.id) {
-          console.log(`⚠️ Duplicate onChainId=${onChainId}, skipping`);
+        // Duplicate guard
+        const dup = await prisma.batch.findUnique({ where: { onChainId } });
+        if (dup && dup.id !== batch.id) {
+          console.log(`⚠️  Duplicate onChainId=${onChainId}`);
           return;
         }
 
-        const challengePeriodSec = parseInt(process.env.CHALLENGE_PERIOD_SECONDS || '300');
-        const challengeEndsAt    = new Date(Date.now() + challengePeriodSec * 1000);
+        const challengeEndsAt = new Date(Date.now() + parseInt(process.env.CHALLENGE_PERIOD_SECONDS || '300') * 1000);
 
         await prisma.batch.update({
           where: { id: batch.id },
@@ -105,31 +103,26 @@ export function startSequencer({ contract, wallet, broadcast, stateManager, pris
             onChainId,
             status:         'challenge_period',
             challengeEndsAt,
-            submitter:      wallet.address,
+            submitter:      wallet.address.toLowerCase(),
             onChainTxHash:  receipt.transactionHash,
           }
         });
 
-        console.log(`✅ Batch on-chain: onChainId=${onChainId} txHash=${receipt.transactionHash.slice(0, 10)}...`);
+        console.log(`✅ Batch on-chain: id=${onChainId} stateRoot=${postStateRoot.slice(0,12)}...`);
         broadcast('batch_created', {
           id: batch.id, onChainId, txCount: pending.length,
           txRoot, stateRoot: postStateRoot, challengeEndsAt: challengeEndsAt.toISOString(),
         });
       } else {
-        // DB-only — simulate challenge period
-        const challengeEndsAt = new Date(Date.now() + 60_000); // 1 min for demo
+        // DB-only: simulate challenge period
+        const challengeEndsAt = new Date(Date.now() + parseInt(process.env.CHALLENGE_PERIOD_SECONDS || '300') * 1000);
         await prisma.batch.update({
           where: { id: batch.id },
           data: { status: 'challenge_period', challengeEndsAt }
         });
-
-        console.log(`✅ Batch created (DB-only mode): ${batch.id}`);
-        broadcast('batch_created', {
-          id: batch.id, onChainId: null, txCount: pending.length,
-          txRoot, stateRoot: postStateRoot,
-        });
+        console.log(`✅ Batch created (DB-only): ${batch.id}`);
+        broadcast('batch_created', { id: batch.id, onChainId: null, txCount: pending.length, txRoot, stateRoot: postStateRoot });
       }
-
     } catch (err) {
       console.error('❌ Sequencer error:', err.message);
       if (txIds.length > 0) {

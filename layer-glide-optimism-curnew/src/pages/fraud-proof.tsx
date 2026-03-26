@@ -4,6 +4,7 @@ import FraudProof from '../components/FraudProof';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import gsap from 'gsap';
 import { ShieldAlert, Trophy, AlertTriangle } from 'lucide-react';
+import { FraudProofGuideButton } from '../components/FraudProofGuide';
 
 const FraudProofPage: React.FC = () => {
   const pageRef = useRef<HTMLDivElement>(null);
@@ -21,12 +22,19 @@ const FraudProofPage: React.FC = () => {
       {/* Header */}
       <div className="mb-12">
         <div className="fp-header tag mb-4" style={{ opacity: 0 }}>Dispute Resolution System</div>
-        <h1 className="fp-header ln-title text-[clamp(3rem,6vw,6rem)] mb-3" style={{ opacity: 0 }}>
-          Fraud<span style={{ color: 'var(--orange)' }}>Proof.</span>
-        </h1>
-        <p className="fp-header text-base" style={{ color: 'var(--muted)', opacity: 0, maxWidth: 600 }}>
-          The economic security layer of LayerGlide. Challenge invalid state transitions, earn rewards for protecting the network. Anyone can participate — no permission required.
-        </p>
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h1 className="fp-header ln-title text-[clamp(3rem,6vw,6rem)] mb-3" style={{ opacity: 0 }}>
+              Fraud<span style={{ color: 'var(--orange)' }}>Proof.</span>
+            </h1>
+            <p className="fp-header text-base" style={{ color: 'var(--muted)', opacity: 0, maxWidth: 600 }}>
+              The economic security layer of LayerGlide. Challenge invalid state transitions, earn rewards for protecting the network.
+            </p>
+          </div>
+          <div className="fp-header" style={{ opacity: 0 }}>
+            <FraudProofGuideButton />
+          </div>
+        </div>
         <div className="mt-5 h-[2px] rounded" style={{ background: 'linear-gradient(90deg, var(--orange), transparent)', width: '100%' }} />
       </div>
 
@@ -34,7 +42,8 @@ const FraudProofPage: React.FC = () => {
       <div className="fp-header mb-8 flex gap-3 p-4 rounded-sm" style={{ opacity: 0, background: 'rgba(217,96,96,0.08)', border: '1px solid rgba(217,96,96,0.22)' }}>
         <AlertTriangle size={18} style={{ color: '#d96060', flexShrink: 0, marginTop: 2 }} />
         <p className="text-sm" style={{ color: '#d96060', lineHeight: 1.6 }}>
-          <strong>Important:</strong> Only submit fraud proofs with verifiable evidence. False challenges are penalized. Valid challenges earn 50% of the 0.05 ETH operator bond = ~0.025 ETH per accepted proof.
+          <strong>Important:</strong> Only submit fraud proofs with verifiable evidence. False challenges are penalized.
+          Valid challenges earn 50% of the 0.05 ETH operator bond = ~0.025 ETH per accepted proof.
         </p>
       </div>
 

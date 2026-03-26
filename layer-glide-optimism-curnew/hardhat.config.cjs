@@ -7,7 +7,7 @@ require('dotenv').config(); // loads root .env
 // 2. Add ALCHEMY_API_KEY and PRIVATE_KEY to it
 // 3. Install dotenv: npm install dotenv
 require('dotenv').config({ path: path.join(__dirname, '.env') });
-
+require("dotenv").config({ path: ".backend/.env" });
 // Ensure private key starts with 0x
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || "";
 const PRIVATE_KEY = process.env.PRIVATE_KEY?.startsWith("0x")
