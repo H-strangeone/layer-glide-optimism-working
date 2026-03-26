@@ -13,6 +13,7 @@ import Withdraw from './pages/Withdraw';
 import Admin from './pages/Admin';
 import Batches from './pages/batches';
 import FraudProofPage from './pages/fraud-proof';
+import DemoGuide from './components/DemoGuide';
 import NotFound from './pages/NotFound';
 import { config } from './lib/wagmi';
 import gsap from 'gsap';
@@ -27,10 +28,17 @@ function Cursor() {
 
   useEffect(() => {
     const move = (e: MouseEvent) => {
-      gsap.to(dot.current,  { x: e.clientX - 4,  y: e.clientY - 4,  duration: 0.05 });
-      gsap.to(ring.current, { x: e.clientX - 18, y: e.clientY - 18, duration: 0.18 });
+      gsap.to(dot.current,  { x: e.clientX - 3,  y: e.clientY - 3,  duration: 0.04 });
+      gsap.to(ring.current, { x: e.clientX - 16, y: e.clientY - 16, duration: 0.16 });
     };
+    const enter = () => { gsap.to(ring.current, { scale: 1.6, duration: 0.2 }); };
+    const leave = () => { gsap.to(ring.current, { scale: 1, duration: 0.2 }); };
+
     window.addEventListener('mousemove', move);
+    document.querySelectorAll('a,button,[role="button"]').forEach(el => {
+      el.addEventListener('mouseenter', enter);
+      el.addEventListener('mouseleave', leave);
+    });
     return () => window.removeEventListener('mousemove', move);
   }, []);
 
@@ -51,10 +59,10 @@ function PageTransition({ children }: { children: React.ReactNode }) {
     const tl = gsap.timeline();
     tl.fromTo(overlayRef.current,
       { scaleX: 0, transformOrigin: 'left center' },
-      { scaleX: 1, duration: 0.28, ease: 'power3.inOut' }
+      { scaleX: 1, duration: 0.22, ease: 'power3.inOut' }
     ).fromTo(overlayRef.current,
       { scaleX: 1, transformOrigin: 'right center' },
-      { scaleX: 0, duration: 0.25, ease: 'power3.inOut' }
+      { scaleX: 0, duration: 0.20, ease: 'power3.inOut' }
     );
   }, [location.pathname]);
 
@@ -70,43 +78,27 @@ function AppContent() {
   useRealtimeUpdates();
   const { isConnected } = useWallet();
 
-  async function ensureCorrectNetwork() {
-    if (!window.ethereum) return;
-
-    const chainId = "0x539";
-
-    try {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId }]
-      });
-    } catch (err) {
-      if (err.code === 4902) {
-        await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [{
-            chainId: "0x539",
-            chainName: "Hardhat Local",
-            rpcUrls: ["http://127.0.0.1:8545"],
-            nativeCurrency: {
-              name: "ETH",
-              symbol: "ETH",
-              decimals: 18
-            }
-          }]
-        });
-      }
-    }
-  }
-
   useEffect(() => {
-    ensureCorrectNetwork();
+    const ensureNetwork = async () => {
+      if (!window.ethereum) return;
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x539" }] });
+      } catch (err: any) {
+        if (err.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{ chainId: "0x539", chainName: "Hardhat Local", rpcUrls: ["http://127.0.0.1:8545"], nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 } }]
+          });
+        }
+      }
+    };
+    ensureNetwork();
   }, []);
+
   return (
     <>
       <Navbar />
-      {/* offset for fixed nav (62px) + ticker (28px when connected) */}
-      <main style={{ paddingTop: isConnected ? 90 : 62, minHeight: '100vh', background: 'var(--bg)' }}>
+      <main style={{ paddingTop: isConnected ? 88 : 60, minHeight: '100vh', background: 'var(--bg)' }}>
         <PageTransition>
           <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 24px' }}>
             <Routes>
@@ -116,6 +108,7 @@ function AppContent() {
               <Route path="/withdraw"     element={<Withdraw />} />
               <Route path="/admin"        element={<Admin />} />
               <Route path="/fraud-proof"  element={<FraudProofPage />} />
+              <Route path="/demo"         element={<DemoGuide />} />
               <Route path="*"             element={<NotFound />} />
             </Routes>
           </div>

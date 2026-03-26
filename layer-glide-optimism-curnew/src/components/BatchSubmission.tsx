@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/hooks/useWallet";
 import { toast } from "@/components/ui/use-toast";
+import { executeL2BatchTransaction, executeL2Transaction } from "@/lib/ethers";
 import { Plus, Trash2, Loader2, PlayCircle, Layers } from "lucide-react";
 
 interface Transaction {
@@ -35,39 +36,39 @@ export default function BatchSubmission({ onSuccess }: BatchSubmissionProps) {
   };
 
   const handleSubmitBatch = async () => {
-    if (!address || transactions.length === 0) return;
+    if (!address) {
+      toast({ title: "Error", description: "Connect wallet first", variant: "destructive" });
+      return;
+    }
+    if (transactions.length === 0) return;
+
+    // Validate
+    for (let i = 0; i < transactions.length; i++) {
+      const tx = transactions[i];
+      if (!tx.recipient || !tx.amount || Number(tx.amount) <= 0) {
+        toast({ title: "Error", description: `Transaction ${i + 1} is missing required fields`, variant: "destructive" });
+        return;
+      }
+    }
 
     setIsLoading(true);
     try {
-      const batchTransactions = transactions.map((tx, index) => {
-        if (!tx.recipient || !tx.amount) {
-          throw new Error(`Transaction ${index + 1} is missing required fields`);
-        }
-        return {
-          from: address,
-          to: tx.recipient,
-          amount: tx.amount,
-          status: 'pending',
-          timestamp: Math.floor(Date.now() / 1000)
-        };
-      });
+      // Use the proper L2 signing flow
+      const recipients = transactions.map(tx => tx.recipient);
+      const amounts = transactions.map(tx => tx.amount);
 
-      const response = await fetch('http://localhost:5500/api/transactions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transactions: batchTransactions }),
-      });
+      if (transactions.length === 1) {
+        await executeL2Transaction(recipients[0], amounts[0]);
+      } else {
+        await executeL2BatchTransaction(recipients, amounts);
+      }
 
-      const responseText = await response.text();
-      if (!response.ok) throw new Error(responseText);
-
-      const result = JSON.parse(responseText);
       toast({
-        title: "Success",
-        description: `Batch #${result.batchId} submitted`,
+        title: "✅ Batch Submitted",
+        description: `${transactions.length} transaction(s) signed and sent to mempool`,
       });
 
-      if (onSuccess) onSuccess(batchTransactions);
+      if (onSuccess) onSuccess(transactions);
       setTransactions([{ recipient: "", amount: "" }]);
     } catch (error) {
       toast({
@@ -97,7 +98,7 @@ export default function BatchSubmission({ onSuccess }: BatchSubmissionProps) {
         </div>
       </div>
 
-      <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+      <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
         {transactions.map((tx, index) => (
           <div key={index} className="flex gap-3 bg-white/5 p-4 rounded-sm border border-white/5 relative group">
             <div className="absolute left-0 top-0 h-full w-0.5 bg-orange opacity-0 group-hover:opacity-100 transition-opacity" />

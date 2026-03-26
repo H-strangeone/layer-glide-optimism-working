@@ -1,5 +1,5 @@
-import SingleTransaction from '@/components/SingleTransaction';
-
+import { SingleTransaction } from '@/components/SingleTransaction';
+import DepositCard from '@/components/DepositCard';
 export default function Home() {
     return (
         <div className="container mx-auto p-4 space-y-6">
