@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { connectWallet, disconnectWallet } from '@/lib/ethers';
 
 export function useWallet() {
@@ -7,23 +7,40 @@ export function useWallet() {
     const [isConnecting, setIsConnecting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const handleAccountsChanged = useCallback((accounts: string[]) => {
+        if (accounts.length === 0) {
+            setAddress(null);
+            setIsConnected(false);
+            localStorage.removeItem('walletConnected');
+            localStorage.removeItem('lastConnectedAddress');
+        } else {
+            setAddress(accounts[0]);
+            setIsConnected(true);
+            localStorage.setItem('walletConnected', 'true');
+            localStorage.setItem('lastConnectedAddress', accounts[0]);
+        }
+    }, []);
+
+    const handleChainChanged = useCallback(() => {
+        window.location.reload();
+    }, []);
+
     useEffect(() => {
-        // Check if already connected
+        // Check if already connected on mount
         const checkConnection = async () => {
             try {
-                const isConnected = localStorage.getItem('walletConnected');
-                const lastConnectedAddress = localStorage.getItem('lastConnectedAddress');
+                const wasConnected = localStorage.getItem('walletConnected');
+                const lastAddress = localStorage.getItem('lastConnectedAddress');
 
-                if (isConnected && lastConnectedAddress) {
-                    const accounts = await window.ethereum.request({
+                if (wasConnected && lastAddress && window.ethereum) {
+                    const accounts: string[] = await window.ethereum.request({
                         method: "eth_accounts"
                     });
 
-                    if (accounts[0]?.toLowerCase() === lastConnectedAddress.toLowerCase()) {
+                    if (accounts.length > 0 && accounts[0].toLowerCase() === lastAddress.toLowerCase()) {
                         setAddress(accounts[0]);
                         setIsConnected(true);
                     } else {
-                        // Clear stale connection
                         localStorage.removeItem('walletConnected');
                         localStorage.removeItem('lastConnectedAddress');
                     }
@@ -34,39 +51,6 @@ export function useWallet() {
         };
 
         checkConnection();
-
-        // Setup event listeners
-        const handleAccountsChanged = (accounts: string[]) => {
-            if (accounts.length === 0) {
-                // Disconnected
-                setAddress(null);
-                setIsConnected(false);
-                localStorage.removeItem('walletConnected');
-                localStorage.removeItem('lastConnectedAddress');
-            } else {
-                // Connected or switched account
-                setAddress(accounts[0]);
-                setIsConnected(true);
-                const handleAccountsChanged = (accounts: string[]) => {
-  if (accounts.length === 0) {
-    setAddress(null);
-    setIsConnected(false);
-    localStorage.removeItem('walletConnected');
-    localStorage.removeItem('lastConnectedAddress');
-  } else {
-    setAddress(accounts[0]);
-    setIsConnected(true);
-    localStorage.setItem('walletConnected', 'true');
-    localStorage.setItem('lastConnectedAddress', accounts[0]);
-    window.location.reload(); // ← add this line
-  }
-};
-            }
-        };
-
-        const handleChainChanged = () => {
-            window.location.reload();
-        };
 
         if (window.ethereum) {
             window.ethereum.on('accountsChanged', handleAccountsChanged);
@@ -79,20 +63,20 @@ export function useWallet() {
                 window.ethereum.removeListener('chainChanged', handleChainChanged);
             }
         };
-    }, []);
+    }, [handleAccountsChanged, handleChainChanged]);
 
     const connect = async () => {
         if (isConnecting) return;
-
         setIsConnecting(true);
         setError(null);
 
         try {
             const result = await connectWallet();
+            // Immediately update state - no page refresh needed
             setAddress(result.address);
             setIsConnected(true);
-        } catch (error) {
-            setError(error instanceof Error ? error.message : "Failed to connect wallet");
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to connect wallet");
             setIsConnected(false);
         } finally {
             setIsConnecting(false);
@@ -104,8 +88,8 @@ export function useWallet() {
             await disconnectWallet();
             setAddress(null);
             setIsConnected(false);
-        } catch (error) {
-            setError(error instanceof Error ? error.message : "Failed to disconnect wallet");
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to disconnect wallet");
         }
     };
 
@@ -117,4 +101,9 @@ export function useWallet() {
         connect,
         disconnect
     };
-} 
+}
+
+// Also export WalletProvider as a passthrough for layout.tsx compatibility
+export function WalletProvider({ children }: { children: React.ReactNode }) {
+    return <>{children}</>;
+}

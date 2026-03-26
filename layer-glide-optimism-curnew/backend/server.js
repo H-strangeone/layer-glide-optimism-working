@@ -673,33 +673,143 @@ app.delete('/api/admin/operators/:address', async (req, r) => {
 
 // ── Auto-Finalize Cron ────────────────────────────────────────────────────────
 
+const AUTO_FINALIZE_INTERVAL = 15_000; // check every 15s
+ 
 setInterval(async () => {
   try {
     const now = new Date();
-    const eli = await prisma.batch.findMany({
-      where: { status: 'challenge_period', challengeEndsAt: { lt: now }, onChainId: { not: null } }
+    
+    // Find all batches where challenge period has expired but status is still challenge_period
+    const expired = await prisma.batch.findMany({
+      where: {
+        status: 'challenge_period',
+        challengeEndsAt: { lt: now },
+      },
+      include: { transactions: true },
     });
-    for (const batch of eli) {
+ 
+    if (expired.length === 0) return;
+ 
+    console.log(`⏰ Auto-finalizing ${expired.length} expired batch(es)...`);
+ 
+    for (const batch of expired) {
       try {
-        if (contract) {
-          const open = await contract.isChallengeWindowOpen(ethers.BigNumber.from(batch.onChainId));
-          if (open) { console.log(`⏳ Challenge still open on-chain for batch ${batch.onChainId}`); continue; }
-          const tx = await contract.finalizeBatch(ethers.BigNumber.from(batch.onChainId));
-          await tx.wait();
-          // BatchFinalized event handler takes it from here
-        } else {
-          const full = await prisma.batch.findUnique({ where: { id: batch.id }, include: { transactions: true } });
-          if (full) await stateManager.applyFinalizedBatch(full);
-          await prisma.batch.update({ where: { id: batch.id }, data: { status: 'finalized' } });
-          await prisma.pendingTransaction.updateMany({ where: { batchId: batch.id }, data: { status: 'finalized' } });
-          broadcast('batch_finalized', { onChainId: batch.onChainId });
-          console.log(`✅ Auto-finalized (DB-only) batch ${batch.onChainId}`);
+        // If we have a live contract, call finalizeBatch on-chain
+        if (contract && batch.onChainId) {
+          try {
+            // Check if challenge window is still open on-chain (safety check)
+            const stillOpen = await contract.isChallengeWindowOpen(
+              ethers.BigNumber.from(batch.onChainId)
+            );
+            if (stillOpen) {
+              console.log(`⏳ Batch #${batch.onChainId} still open on-chain — skipping`);
+              continue;
+            }
+ 
+            const tx = await contract.finalizeBatch(
+              ethers.BigNumber.from(batch.onChainId)
+            );
+            await tx.wait();
+            // BatchFinalized event handler takes it from here
+            console.log(`✅ On-chain finalized batch #${batch.onChainId}`);
+            continue;
+          } catch (chainErr) {
+            // If already finalized or other revert — handle gracefully
+            if (chainErr.message?.includes('Already finalized') || 
+                chainErr.message?.includes('already finalized')) {
+              console.log(`ℹ️  Batch #${batch.onChainId} already finalized on-chain, syncing DB...`);
+            } else {
+              console.warn(`⚠️  On-chain finalize failed for #${batch.onChainId}: ${chainErr.message} — falling back to DB`);
+            }
+          }
         }
-      } catch (e) { console.error(`Auto-finalize ${batch.onChainId}: ${e.message}`); }
+ 
+        // DB-only finalization (no contract or fallback)
+        await stateManager.applyFinalizedBatch(batch);
+ 
+        await prisma.batch.update({
+          where: { id: batch.id },
+          data: { status: 'finalized' },
+        });
+ 
+        await prisma.pendingTransaction.updateMany({
+          where: { batchId: batch.id },
+          data: { status: 'finalized' },
+        });
+ 
+        broadcast('batch_finalized', {
+          id: batch.id,
+          onChainId: batch.onChainId,
+          stateRoot: batch.stateRoot,
+        });
+ 
+        console.log(`✅ DB-only finalized batch ${batch.id.slice(0, 8)}...`);
+      } catch (batchErr) {
+        console.error(`❌ Failed to finalize batch ${batch.id.slice(0, 8)}: ${batchErr.message}`);
+      }
     }
-  } catch (e) { console.error('Auto-finalize cron:', e.message); }
-}, 30_000);
-
+  } catch (cronErr) {
+    console.error('❌ Auto-finalize cron error:', cronErr.message);
+  }
+}, AUTO_FINALIZE_INTERVAL);
+ 
+ 
+// ── ADD this route for real block height ──────────────────────────────────────
+ 
+// Real block height from the connected chain (Hardhat / Sepolia)
+// Block height = number of blocks mined, NOT number of transactions
+app.get('/api/block-height', async (_, r) => {
+  try {
+    if (!provider) {
+      // No chain connected — return a simulated incrementing block number
+      // Hardhat mines a block every ~12s on average
+      const startTime = Math.floor(Date.now() / 1000);
+      const simulatedBlock = Math.floor(startTime / 12) % 1000000;
+      return r.json({ blockNumber: simulatedBlock, source: 'simulated', network: NETWORK });
+    }
+ 
+    const blockNumber = await provider.getBlockNumber();
+    const block       = await provider.getBlock(blockNumber);
+ 
+    return r.json({
+      blockNumber,
+      timestamp:   block?.timestamp || Math.floor(Date.now() / 1000),
+      gasLimit:    block?.gasLimit?.toString() || '30000000',
+      source:      'chain',
+      network:     NETWORK,
+    });
+  } catch (e) {
+    // Graceful fallback
+    const fb = Math.floor(Date.now() / 12000);
+    r.json({ blockNumber: fb, source: 'fallback', error: e.message, network: NETWORK });
+  }
+});
+ 
+// Also fix the /health endpoint to include correct block from chain
+// Replace the existing /health route with:
+app.get('/health', async (_, res) => {
+  let chain = false, block = null;
+  if (provider) {
+    try {
+      block = await provider.getBlockNumber(); // ← real block height
+      chain = true;
+    } catch {}
+  }
+  const [pending, batches] = await Promise.all([
+    prisma.pendingTransaction.count({ where: { status: 'pending' } }).catch(() => 0),
+    prisma.batch.count().catch(() => 0),
+  ]);
+  res.json({
+    status: 'ok',
+    chain,
+    network: NETWORK,
+    contractAddress: CONTRACT_ADDRESS,
+    block,            // real block number from chain
+    pending,
+    batches,
+    ts: Date.now(),
+  });
+});
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 initBlockchain().then(connected => {
