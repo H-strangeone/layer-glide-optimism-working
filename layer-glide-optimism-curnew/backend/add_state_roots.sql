@@ -1,12 +1,4 @@
--- Add stateRoot chain fields to Batch
-ALTER TABLE "Batch" ADD COLUMN "stateRoot" TEXT;
-ALTER TABLE "Batch" ADD COLUMN "prevStateRoot" TEXT;
 
--- Add challenge correctStateRoot
-ALTER TABLE "Challenge" ADD COLUMN "correctStateRoot" TEXT;
-
--- Add deadline to PendingTransaction
-ALTER TABLE "PendingTransaction" ADD COLUMN "deadline" INTEGER;
 
 -- Create StateSnapshot
 CREATE TABLE IF NOT EXISTS "StateSnapshot" (
