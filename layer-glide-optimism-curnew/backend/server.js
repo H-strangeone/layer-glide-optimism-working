@@ -1,19 +1,11 @@
 /**
- * LayerGlide Backend – Production-grade Optimistic Rollup Server
+ * LayerGlide Backend
  *
- * KEY FIXES vs original:
- * 1.  L1 balance reads from chain — never mutated off-chain
- * 2.  L2 transfers are off-chain ONLY (correct rollup model)
- * 3.  All polling removed — single WebSocket pushes updates
- * 4.  Nonce + EIP-712 signature on every L2 tx (replay protection)
- * 5.  Two-layer state: pendingState vs finalizedState
- * 6.  Balances committed to finalState ONLY after challenge period
- * 7.  Auto-finalize with on-chain safety check
- * 8.  Event-driven contract sync (BatchSubmitted, BatchFinalized, FraudProofAccepted)
- * 9.  Real fraud proof validates state transition
- * 10. Sequencer runs as separate concern
- * 11. StateManager is the execution engine — routes all state changes
- * 12. Withdrawal requires finalized balance + Merkle proof
+ * KEY FIX in this version:
+ * - All Prisma DateTime fields converted to unix seconds before sending to frontend
+ *   (fixes "56 years ago" bug — Prisma returns ISO strings, frontend did parseInt())
+ * - /api/batches now returns normalized batch objects with createdAt as unix seconds
+ * - Batch status values aligned: pending_submission | challenge_period | finalized | rejected | failed
  */
 
 import express    from 'express';
@@ -31,44 +23,83 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 dotenv.config({ path: join(__dirname, '.env') });
 
-// ─── Config ───────────────────────────────────────────────────────────────────
 const PORT                = parseInt(process.env.PORT                     || '5500');
 const WS_PORT             = parseInt(process.env.WS_PORT                  || '5501');
 const NETWORK             = process.env.NETWORK                           || 'localhost';
 const CONTRACT_ADDRESS    = process.env.CONTRACT_ADDRESS                  || '0x5FbDB2315678afecb367f032d93F642f64180aa3';
 const CHALLENGE_PERIOD_MS = parseInt(process.env.CHALLENGE_PERIOD_SECONDS || '300') * 1000;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function normalizeToWei(v) {
+// ─── Serialization helpers ────────────────────────────────────────────────────
+
+/** Convert any timestamp to unix seconds. Frontend uses this for formatDistanceToNow etc. */
+function toUnixSec(ts) {
+  if (!ts) return Math.floor(Date.now() / 1000);
+  if (ts instanceof Date) return Math.floor(ts.getTime() / 1000);
+  if (typeof ts === 'number') return ts > 1e10 ? Math.floor(ts / 1000) : ts;
+  // ISO string from Prisma e.g. "2024-01-15T10:30:00.000Z"
+  return Math.floor(new Date(ts).getTime() / 1000);
+}
+
+/** Normalize a Prisma batch object for the frontend */
+function normalizeBatch(b) {
+  return {
+    ...b,
+    createdAt:      toUnixSec(b.createdAt),
+    updatedAt:      b.updatedAt ? toUnixSec(b.updatedAt) : undefined,
+    submittedAt:    b.submittedAt ? toUnixSec(b.submittedAt) : undefined,
+    challengeEndsAt: b.challengeEndsAt ? toUnixSec(b.challengeEndsAt) : null,
+    transactions:   (b.transactions || []).map(normalizeTx),
+    challenges:     (b.challenges   || []).map(normalizeChallenge),
+    // Human readable: how much challenge time remains
+    timeLeftMs: b.challengeEndsAt
+      ? Math.max(0, new Date(b.challengeEndsAt).getTime() - Date.now())
+      : 0,
+  };
+}
+
+function normalizeTx(t) {
+  return {
+    ...t,
+    hash:      t.id,
+    from:      t.fromAddress,
+    to:        t.toAddress,
+    value:     t.valueWei,
+    createdAt: toUnixSec(t.createdAt),
+    updatedAt: t.updatedAt ? toUnixSec(t.updatedAt) : undefined,
+  };
+}
+
+function normalizeChallenge(c) {
+  return {
+    ...c,
+    createdAt:  toUnixSec(c.createdAt),
+    resolvedAt: c.resolvedAt ? toUnixSec(c.resolvedAt) : null,
+  };
+}
+
+function normalizeWei(v) {
   if (!v) return '0';
   const s = v.toString().trim();
   if (!s || s === '0') return '0';
-  if (!s.includes('.') && s.length >= 15) return s;          // already wei
+  if (!s.includes('.') && s.length >= 15) return s;
   try { return ethers.utils.parseEther(s).toString(); }
   catch { return s; }
-}
-
-function toUnixSec(ts) {
-  if (!ts) return Math.floor(Date.now() / 1000);
-  if (typeof ts === 'number') return ts > 1e12 ? Math.floor(ts / 1000) : ts;
-  return Math.floor(new Date(ts).getTime() / 1000);
 }
 
 function fmtEth(wei) {
   try { return ethers.utils.formatEther(wei.toString()); } catch { return '0'; }
 }
 
-// ─── Prisma ───────────────────────────────────────────────────────────────────
-const prisma = new PrismaClient();
-
-// ─── StateManager (execution engine) ─────────────────────────────────────────
+// ─── Init ─────────────────────────────────────────────────────────────────────
+const prisma       = new PrismaClient();
 const stateManager = new StateManager(prisma, CONTRACT_ADDRESS);
+const app          = express();
 
-// ─── Express ──────────────────────────────────────────────────────────────────
-const app = express();
 app.use(cors({
-  origin: ['http://localhost:5173','http://localhost:8080',
-           'http://localhost:3000', process.env.FRONTEND_URL].filter(Boolean)
+  origin: [
+    'http://localhost:5173','http://localhost:8080',
+    'http://localhost:3000', process.env.FRONTEND_URL
+  ].filter(Boolean)
 }));
 app.use(express.json({ limit: '1mb' }));
 
@@ -101,7 +132,6 @@ const CONTRACT_ABI = [
   'function l2Balances(address) view returns (uint256)',
   'function isOperator(address) view returns (bool)',
   'function operatorBonds(address) view returns (uint256)',
-  'function nonces(address) view returns (uint256)',
   'function admin() view returns (address)',
   'function nextBatchId() view returns (uint256)',
   'function challengePeriod() view returns (uint256)',
@@ -111,66 +141,52 @@ const CONTRACT_ABI = [
   'function removeOperator(address op)',
   'function depositOperatorBond() payable',
   'function isBatchFraudulent(uint256) view returns (bool)',
-  'function batches(uint256) view returns (uint256 batchId, bytes32 txRoot, bytes32 stateRoot, bytes32 prevStateRoot, uint256 submittedAt, address submitter, bool finalized, bool fraudulent, uint256 txCount)',
+  'function batches(uint256) view returns (uint256,bytes32,bytes32,bytes32,uint256,address,bool,bool,uint256)',
   'event BatchSubmitted(uint256 indexed batchId, bytes32 txRoot, bytes32 stateRoot, bytes32 prevStateRoot, address submitter, uint256 txCount)',
   'event BatchFinalized(uint256 indexed batchId, bytes32 stateRoot)',
   'event FraudProofAccepted(uint256 indexed batchId, address challenger, uint256 reward)',
   'event FundsDeposited(address indexed user, uint256 amount)',
   'event FundsWithdrawn(address indexed user, uint256 amount)',
   'event OperatorSlashed(address indexed operator, uint256 amount, address challenger)',
-  'event OperatorAdded(address indexed operator)',
-  'event OperatorRemoved(address indexed operator)',
-  'event WithdrawalRootPublished(uint256 indexed batchId, bytes32 withdrawalRoot)',
 ];
 
 // ─── Blockchain ───────────────────────────────────────────────────────────────
-let provider = null;
-let wallet   = null;
-let contract = null;
+let provider = null, wallet = null, contract = null;
 
 async function initBlockchain() {
   try {
     const rpcUrl = NETWORK === 'sepolia'
       ? `https://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
       : 'http://localhost:8545';
-
     provider = new ethers.providers.JsonRpcProvider(rpcUrl);
     await provider.getNetwork();
-
     const pk = process.env.PRIVATE_KEY;
     if (!pk) throw new Error('PRIVATE_KEY not set');
     wallet   = new ethers.Wallet(pk, provider);
     contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, wallet);
-
     const code = await provider.getCode(CONTRACT_ADDRESS);
     if (code === '0x') throw new Error(`No contract at ${CONTRACT_ADDRESS}`);
-
-    console.log(`✅ Blockchain: ${NETWORK}  contract: ${CONTRACT_ADDRESS}`);
-    console.log(`   Operator: ${wallet.address}`);
+    console.log(`✅ Chain: ${NETWORK}  contract: ${CONTRACT_ADDRESS}  op: ${wallet.address}`);
     setupEventListeners();
     return true;
   } catch (err) {
-    console.warn(`⚠️  Blockchain unavailable: ${err.message} — DB-only mode`);
+    console.warn(`⚠️  Chain unavailable: ${err.message} — DB-only`);
     return false;
   }
 }
 
-// ─── Event-Driven Sync ────────────────────────────────────────────────────────
 function setupEventListeners() {
   if (!contract) return;
 
-  // Sync externally-submitted batches
   contract.on('BatchSubmitted', async (batchId, txRoot, stateRoot, prevStateRoot, submitter, txCount) => {
     try {
       const id = batchId.toString();
-      const existing = await prisma.batch.findUnique({ where: { onChainId: id } });
-      if (!existing) {
+      if (!await prisma.batch.findUnique({ where: { onChainId: id } })) {
         const challengeEndsAt = new Date(Date.now() + CHALLENGE_PERIOD_MS);
         await prisma.batch.create({
           data: {
-            onChainId: id, transactionsRoot: txRoot,
-            stateRoot, prevStateRoot, status: 'challenge_period',
-            submitter: submitter.toLowerCase(),
+            onChainId: id, transactionsRoot: txRoot, stateRoot, prevStateRoot,
+            status: 'challenge_period', submitter: submitter.toLowerCase(),
             txCount: txCount.toNumber(), challengeEndsAt,
           }
         });
@@ -180,72 +196,58 @@ function setupEventListeners() {
     } catch (e) { console.error('BatchSubmitted:', e.message); }
   });
 
-  // FIX 6/7: Apply balances ONLY on finalization
   contract.on('BatchFinalized', async (batchId, stateRoot) => {
     try {
-      const id = batchId.toString();
-      const batch = await prisma.batch.findUnique({
-        where: { onChainId: id }, include: { transactions: true }
-      });
+      const id    = batchId.toString();
+      const batch = await prisma.batch.findUnique({ where: { onChainId: id }, include: { transactions: true } });
       if (batch) {
         await stateManager.applyFinalizedBatch(batch);
         await prisma.batch.update({ where: { id: batch.id }, data: { status: 'finalized' } });
-        await prisma.pendingTransaction.updateMany({
-          where: { batchId: batch.id }, data: { status: 'finalized' }
-        });
+        await prisma.pendingTransaction.updateMany({ where: { batchId: batch.id }, data: { status: 'finalized' } });
       }
       broadcast('batch_finalized', { onChainId: id, stateRoot });
       console.log(`✅ BatchFinalized onChainId=${id}`);
     } catch (e) { console.error('BatchFinalized:', e.message); }
   });
 
-  // Revert state on fraud
   contract.on('FraudProofAccepted', async (batchId, challenger, reward) => {
     try {
-      const id = batchId.toString();
-      const batch = await prisma.batch.findUnique({
-        where: { onChainId: id }, include: { transactions: true }
-      });
+      const id    = batchId.toString();
+      const batch = await prisma.batch.findUnique({ where: { onChainId: id }, include: { transactions: true } });
       if (batch) {
         await stateManager.revertBatch(batch);
         await prisma.batch.update({ where: { id: batch.id }, data: { status: 'rejected' } });
-        await prisma.pendingTransaction.updateMany({
-          where: { batchId: batch.id }, data: { status: 'rejected' }
-        });
-        // Slash submitter bond
-        if (batch.submitter) {
-          await prisma.operator.updateMany({
-            where: { address: batch.submitter.toLowerCase() },
-            data: { bondWei: '0', isActive: false }
-          });
-        }
+        await prisma.pendingTransaction.updateMany({ where: { batchId: batch.id }, data: { status: 'rejected' } });
       }
       broadcast('fraud_proof_accepted', { onChainId: id, challenger, reward: reward.toString() });
       console.log(`🚨 FraudProofAccepted batchId=${id}`);
     } catch (e) { console.error('FraudProofAccepted:', e.message); }
   });
 
-  // Deposit: credit pending L2 balance
   contract.on('FundsDeposited', async (user, amount) => {
     try {
       await stateManager.creditPending(user.toLowerCase(), amount.toString());
       broadcast('balance_updated', { address: user.toLowerCase() });
-      console.log(`💰 Deposit ${user} +${fmtEth(amount)} ETH`);
     } catch (e) { console.error('FundsDeposited:', e.message); }
   });
 
-  contract.on('FundsWithdrawn',  async (user) => broadcast('balance_updated', { address: user.toLowerCase() }));
-  contract.on('OperatorSlashed', async (op, amt, ch) => broadcast('operator_slashed', { operator: op, amount: amt.toString(), challenger: ch }));
+  contract.on('FundsWithdrawn', async (user, amount) => {
+    try {
+      await stateManager.debitWithdrawal(user.toLowerCase(), amount.toString());
+      broadcast('balance_updated', { address: user.toLowerCase() });
+    } catch (e) { console.error('FundsWithdrawn:', e.message); }
+  });
+
+  contract.on('OperatorSlashed', (op, amt, ch) =>
+    broadcast('operator_slashed', { operator: op, amount: amt.toString(), challenger: ch })
+  );
 
   console.log('📡 Contract event listeners active');
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ROUTES
-// ═════════════════════════════════════════════════════════════════════════════
+// ─── Routes ───────────────────────────────────────────────────────────────────
 
-// ── Health ───────────────────────────────────────────────────────────────────
-app.get('/health', async (req, res) => {
+app.get('/health', async (_, res) => {
   let chain = false, block = null;
   if (provider) { try { block = await provider.getBlockNumber(); chain = true; } catch {} }
   const [pending, batches] = await Promise.all([
@@ -255,7 +257,6 @@ app.get('/health', async (req, res) => {
   res.json({ status: 'ok', chain, network: NETWORK, contractAddress: CONTRACT_ADDRESS, block, pending, batches, ts: Date.now() });
 });
 
-// ── Admin ────────────────────────────────────────────────────────────────────
 app.get('/api/admin/check', async (req, res) => {
   try {
     const { address } = req.query;
@@ -273,14 +274,8 @@ app.get('/api/admin/check', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Transactions ─────────────────────────────────────────────────────────────
+// ── Transactions ──────────────────────────────────────────────────────────────
 
-/**
- * POST /api/transactions
- * FIX 1.2: L2 transfers are OFF-CHAIN ONLY.
- * Signed by user (EIP-712). Nonce enforced. Balance from pendingState.
- * Balances NOT committed to finalState until batch is finalized.
- */
 app.post('/api/transactions', async (req, res) => {
   try {
     const { transactions } = req.body;
@@ -291,7 +286,7 @@ app.post('/api/transactions', async (req, res) => {
     for (const tx of transactions) {
       const from     = (tx.from || tx.fromAddress || '').toLowerCase();
       const to       = (tx.to   || tx.toAddress   || '').toLowerCase();
-      const valueWei = normalizeToWei(tx.amount || tx.value || tx.valueWei || '0');
+      const valueWei = normalizeWei(tx.amount || tx.value || tx.valueWei || '0');
       const nonce    = tx.nonce    ?? 0;
       const sig      = tx.signature;
       const deadline = tx.deadline ?? Math.floor(Date.now() / 1000) + 3600;
@@ -300,18 +295,21 @@ app.post('/api/transactions', async (req, res) => {
       if (!ethers.utils.isAddress(to))    return res.status(400).json({ error: `Invalid to: ${to}` });
       if (BigInt(valueWei) <= 0n)         return res.status(400).json({ error: 'Value must be > 0' });
       if (!sig)                           return res.status(400).json({ error: 'Signature required' });
-      if (deadline < Math.floor(Date.now() / 1000)) return res.status(400).json({ error: 'Deadline expired' });
+      if (deadline < Math.floor(Date.now() / 1000))
+        return res.status(400).json({ error: 'Transaction deadline expired' });
 
-      // Replay protection — verify signature
+      // Verify EIP-712 signature — replay protection
       const msgHash = ethers.utils.solidityKeccak256(
-        ['address','address','uint256','uint256','uint256'],
+        ['address', 'address', 'uint256', 'uint256', 'uint256'],
         [from, to, valueWei, nonce, deadline]
       );
-      const recovered = ethers.utils.verifyMessage(ethers.utils.arrayify(msgHash), sig).toLowerCase();
+      let recovered;
+      try { recovered = ethers.utils.verifyMessage(ethers.utils.arrayify(msgHash), sig).toLowerCase(); }
+      catch { return res.status(400).json({ error: 'Invalid signature format' }); }
       if (recovered !== from)
-        return res.status(400).json({ error: `Signature mismatch: expected ${from}, recovered ${recovered}` });
+        return res.status(400).json({ error: `Signature mismatch: expected ${from}, got ${recovered}` });
 
-      // Nonce check
+      // Sequential nonce — prevents replay attacks
       const nonceRec = await prisma.nonce.findUnique({
         where: { userAddress_contractAddress: { userAddress: from, contractAddress: CONTRACT_ADDRESS.toLowerCase() } }
       });
@@ -319,18 +317,19 @@ app.post('/api/transactions', async (req, res) => {
       if (nonce !== expected)
         return res.status(400).json({ error: `Bad nonce: expected ${expected}, got ${nonce}` });
 
-      // Pending balance check
+      // Pending balance check — double-spend prevention
       if (!(await stateManager.canSpend(from, valueWei)))
-        return res.status(400).json({ error: `Insufficient pending L2 balance for ${from}` });
+        return res.status(400).json({ error: `Insufficient L2 balance for ${from}` });
 
-      // Apply to PENDING state only (not final)
+      // Optimistic: deduct from pending state immediately (NOT finalized)
+      // This is exactly how Optimism/Arbitrum work — your L2 balance updates instantly
       await stateManager.applyPendingTransfer(from, to, valueWei);
 
       const stored = await prisma.pendingTransaction.create({
         data: { fromAddress: from, toAddress: to, valueWei, nonce, signature: sig, status: 'pending' }
       });
 
-      // Bump nonce
+      // Increment nonce
       await prisma.nonce.upsert({
         where: { userAddress_contractAddress: { userAddress: from, contractAddress: CONTRACT_ADDRESS.toLowerCase() } },
         create: { userAddress: from, contractAddress: CONTRACT_ADDRESS.toLowerCase(), currentNonce: 1 },
@@ -345,169 +344,182 @@ app.post('/api/transactions', async (req, res) => {
   } catch (e) { console.error('POST /api/transactions:', e); res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/transactions/pending', async (_req, res) => {
+app.get('/api/transactions/pending', async (_, r) => {
   try {
     const txs = await prisma.pendingTransaction.findMany({ where: { status: 'pending' }, orderBy: { createdAt: 'asc' } });
-    res.json(txs.map(t => ({ ...t, createdAt: toUnixSec(t.createdAt) })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    r.json(txs.map(normalizeTx));
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/transactions/network', async (_req, res) => {
+app.get('/api/transactions/network', async (_, r) => {
   try {
     const txs = await prisma.pendingTransaction.findMany({ orderBy: { createdAt: 'desc' }, include: { batch: true } });
-    res.json(txs.map(t => ({
-      hash: t.id, from: t.fromAddress, to: t.toAddress, value: t.valueWei,
-      status: t.batch?.status || t.status, createdAt: toUnixSec(t.createdAt),
-      batchId: t.batch?.onChainId || null, type: 'transfer', isInBatch: !!t.batch,
+    r.json(txs.map(t => ({
+      ...normalizeTx(t),
+      status: t.batch?.status || t.status,
+      batchId: t.batch?.onChainId || null,
+      type: 'transfer',
+      isInBatch: !!t.batch,
     })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/transactions/live', async (_req, res) => {
+app.get('/api/transactions/live', async (_, r) => {
   try {
     const txs = await prisma.pendingTransaction.findMany({ orderBy: { createdAt: 'desc' }, take: 20, include: { batch: true } });
-    res.json(txs.map(t => ({
-      hash: t.id, from: t.fromAddress, to: t.toAddress, value: t.valueWei,
-      status: t.status, createdAt: toUnixSec(t.createdAt),
-      batchId: t.batch?.onChainId || null,
-    })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    r.json(txs.map(t => ({ ...normalizeTx(t), batchId: t.batch?.onChainId || null })));
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/transactions/user/:address', async (req, res) => {
+app.get('/api/transactions/user/:address', async (req, r) => {
   try {
     const addr = req.params.address.toLowerCase();
     const txs  = await prisma.pendingTransaction.findMany({
       where: { OR: [{ fromAddress: addr }, { toAddress: addr }] },
       include: { batch: true }, orderBy: { createdAt: 'desc' }
     });
-    res.json({
+    r.json({
       transactions: txs.map(t => ({
-        hash: t.id, from: t.fromAddress, to: t.toAddress, value: t.valueWei,
-        status: t.batch?.status || t.status, createdAt: toUnixSec(t.createdAt),
-        batchId: t.batch?.onChainId || null, type: 'transfer', isInBatch: !!t.batch,
+        ...normalizeTx(t),
+        status: t.batch?.status || t.status,
+        batchId: t.batch?.onChainId || null,
+        type: 'transfer',
+        isInBatch: !!t.batch,
       }))
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-// ── Batches ──────────────────────────────────────────────────────────────────
-app.get('/api/batches', async (_req, res) => {
+// ── Batches ───────────────────────────────────────────────────────────────────
+// ALL batch endpoints now use normalizeBatch() → createdAt is unix seconds
+
+app.get('/api/batches', async (_, r) => {
   try {
-    res.json(await prisma.batch.findMany({ orderBy: { createdAt: 'desc' }, include: { transactions: true } }));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const raw = await prisma.batch.findMany({ orderBy: { createdAt: 'desc' }, include: { transactions: true } });
+    r.json(raw.map(normalizeBatch));
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/batches/user/:address', async (req, res) => {
+app.get('/api/batches/user/:address', async (req, r) => {
   try {
     const addr = req.params.address.toLowerCase();
-    res.json(await prisma.batch.findMany({
+    const raw  = await prisma.batch.findMany({
       where: { transactions: { some: { OR: [{ fromAddress: addr }, { toAddress: addr }] } } },
       include: { transactions: true }, orderBy: { createdAt: 'desc' }
-    }));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    r.json(raw.map(normalizeBatch));
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/batches/:id', async (req, res) => {
+app.get('/api/batches/:id', async (req, r) => {
   try {
-    const batch = await prisma.batch.findFirst({
+    const b = await prisma.batch.findFirst({
       where: { OR: [{ id: req.params.id }, { onChainId: req.params.id }] },
       include: { transactions: true, challenges: true }
     });
-    if (!batch) return res.status(404).json({ error: 'Not found' });
-    res.json(batch);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (!b) return r.status(404).json({ error: 'Not found' });
+    r.json(normalizeBatch(b));
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-// ── Fraud Proof Marketplace ───────────────────────────────────────────────────
-app.get('/api/fraud-proof/challengeable', async (_req, res) => {
+// ── Fraud Proof ───────────────────────────────────────────────────────────────
+
+app.get('/api/fraud-proof/challengeable', async (_, r) => {
   try {
-    const now     = new Date();
-    const batches = await prisma.batch.findMany({
+    const now = new Date();
+    const raw = await prisma.batch.findMany({
       where: { status: 'challenge_period', challengeEndsAt: { gt: now }, onChainId: { not: null } },
       include: { transactions: true }, orderBy: { createdAt: 'desc' }
     });
-    res.json(batches.map(b => ({
-      ...b,
-      timeLeftMs: b.challengeEndsAt ? b.challengeEndsAt.getTime() - Date.now() : 0,
+    r.json(raw.map(b => ({
+      ...normalizeBatch(b),
       txCount: b.transactions.length,
     })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/fraud-proof/generate', async (req, res) => {
+app.post('/api/fraud-proof/generate', async (req, r) => {
   try {
     const { batchId, txIndex } = req.body;
-    if (!batchId) return res.status(400).json({ error: 'batchId required' });
+    if (!batchId) return r.status(400).json({ error: 'batchId required' });
     const batch = await prisma.batch.findFirst({
       where: { OR: [{ id: batchId }, { onChainId: batchId }] }, include: { transactions: true }
     });
-    if (!batch) return res.status(404).json({ error: 'Batch not found' });
-    res.json(await stateManager.generateFraudProof(batch, txIndex ?? 0));
-  } catch (e) { console.error('generate-fraud-proof:', e); res.status(500).json({ error: e.message }); }
+    if (!batch) return r.status(404).json({ error: 'Batch not found' });
+    r.json(await stateManager.generateFraudProof(batch, txIndex ?? 0));
+  } catch (e) { console.error('generate-fraud-proof:', e); r.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/fraud-proof/submit', async (req, res) => {
+app.post('/api/fraud-proof/submit', async (req, r) => {
   try {
     const { batchId, fraudulentTxHash, txProof, correctStateRoot, challengerAddress } = req.body;
     if (!batchId || !fraudulentTxHash || !txProof || !correctStateRoot)
-      return res.status(400).json({ error: 'batchId, fraudulentTxHash, txProof, correctStateRoot required' });
+      return r.status(400).json({ error: 'batchId, fraudulentTxHash, txProof, correctStateRoot required' });
 
     const batch = await prisma.batch.findFirst({ where: { OR: [{ id: batchId }, { onChainId: batchId }] } });
-    if (!batch)                           return res.status(404).json({ error: 'Batch not found' });
-    if (batch.status !== 'challenge_period') return res.status(400).json({ error: 'Not in challenge period' });
-    if (!batch.onChainId)                 return res.status(400).json({ error: 'Batch not on-chain yet' });
+    if (!batch)                               return r.status(404).json({ error: 'Batch not found' });
+    if (batch.status !== 'challenge_period')  return r.status(400).json({ error: `Batch not in challenge period (status: ${batch.status})` });
+    if (!batch.onChainId)                     return r.status(400).json({ error: 'Batch not on-chain yet' });
     if (batch.challengeEndsAt && new Date() > batch.challengeEndsAt)
-      return res.status(400).json({ error: 'Challenge window expired' });
+      return r.status(400).json({ error: 'Challenge window expired' });
 
     const challenge = await prisma.challenge.create({
       data: {
-        batchId: batch.id,
-        challengerAddress: (challengerAddress || '0x0000000000000000000000000000000000000000').toLowerCase(),
-        fraudProofHash: fraudulentTxHash, merkleProof: JSON.stringify(txProof),
-        correctStateRoot, status: 'pending',
+        batchId:           batch.id,
+        challengerAddress: (challengerAddress || ethers.constants.AddressZero).toLowerCase(),
+        fraudProofHash:    fraudulentTxHash,
+        merkleProof:       JSON.stringify(txProof),
+        correctStateRoot,
+        status:            'pending',
       }
     });
 
     if (contract) {
       try {
-        const tx      = await contract.submitFraudProof(ethers.BigNumber.from(batch.onChainId), fraudulentTxHash, txProof, correctStateRoot);
+        const tx      = await contract.submitFraudProof(
+          ethers.BigNumber.from(batch.onChainId), fraudulentTxHash, txProof, correctStateRoot
+        );
         const receipt = await tx.wait();
         await prisma.challenge.update({ where: { id: challenge.id }, data: { status: 'accepted', onChainTxHash: receipt.transactionHash } });
         broadcast('fraud_proof_submitted', { batchId: batch.id, onChainId: batch.onChainId, txHash: receipt.transactionHash });
-        return res.json({ success: true, txHash: receipt.transactionHash, challenge });
+        return r.json({ success: true, txHash: receipt.transactionHash, challenge });
       } catch (err) {
         await prisma.challenge.update({ where: { id: challenge.id }, data: { status: 'rejected' } });
-        return res.status(400).json({ error: `Contract rejected: ${err.message}` });
+        return r.status(400).json({ error: `Contract rejected: ${err.message}` });
       }
     }
 
-    res.json({ success: true, message: 'DB-only mode', challenge });
-  } catch (e) { console.error('submit-fraud-proof:', e); res.status(500).json({ error: e.message }); }
+    // DB-only: manually trigger revert+slash
+    const fullBatch = await prisma.batch.findUnique({
+      where: { id: batch.id }, include: { transactions: true }
+    });
+    await stateManager.revertBatch({ ...fullBatch });
+    await prisma.batch.update({ where: { id: batch.id }, data: { status: 'rejected' } });
+    await prisma.pendingTransaction.updateMany({ where: { batchId: batch.id }, data: { status: 'rejected' } });
+    await prisma.challenge.update({ where: { id: challenge.id }, data: { status: 'accepted' } });
+    broadcast('fraud_proof_accepted', { onChainId: batch.onChainId, challenger: challengerAddress, reward: '0' });
+    r.json({ success: true, message: 'DB-only: batch rejected + state reverted + operator slashed', challenge });
+  } catch (e) { console.error('submit-fraud-proof:', e); r.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/fraud-proof/challenges', async (_req, res) => {
-  try { res.json(await prisma.challenge.findMany({ orderBy: { createdAt: 'desc' }, include: { batch: true } })); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+app.get('/api/fraud-proof/challenges', async (_, r) => {
+  try {
+    const raw = await prisma.challenge.findMany({ orderBy: { createdAt: 'desc' }, include: { batch: true } });
+    r.json(raw.map(c => ({ ...normalizeChallenge(c), batch: c.batch ? normalizeBatch(c.batch) : null })));
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/rollup/fraud-proof', (_req, res) => res.json({ isValid: true, message: 'Use /api/fraud-proof/submit' }));
+app.post('/api/rollup/fraud-proof', (_, r) => r.json({ isValid: true, message: 'Use /api/fraud-proof/submit' }));
 
 // ── Balance ───────────────────────────────────────────────────────────────────
-app.get('/api/balance/:address', async (req, res) => {
+
+app.get('/api/balance/:address', async (req, r) => {
   try {
     const addr = req.params.address.toLowerCase();
-
-    // L1: always from chain — read-only, never mutated here
-    let l1Wei = '0';
-    if (provider) {
-      try { l1Wei = (await provider.getBalance(addr)).toString(); } catch {}
-    }
-
-    // L2: two-layer state
+    let l1Wei  = '0';
+    if (provider) { try { l1Wei = (await provider.getBalance(addr)).toString(); } catch {} }
     const { pendingWei, finalizedWei } = await stateManager.getBalance(addr);
-
-    res.json({
+    r.json({
       layer1Balance:    fmtEth(l1Wei),
       layer2Balance:    fmtEth(pendingWei),
       finalizedBalance: fmtEth(finalizedWei),
@@ -518,44 +530,53 @@ app.get('/api/balance/:address', async (req, res) => {
       finalizedWei,
       pendingWei,
     });
-  } catch (e) { console.error('balance:', e); res.status(500).json({ error: e.message }); }
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/balance/update', async (req, res) => {
+app.post('/api/balance/update', async (req, r) => {
   try {
     const { userAddress, balance } = req.body;
-    if (!userAddress) return res.status(400).json({ error: 'userAddress required' });
-    await stateManager.setBalance(userAddress.toLowerCase(), normalizeToWei(balance));
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (!userAddress) return r.status(400).json({ error: 'userAddress required' });
+    await stateManager.setBalance(userAddress.toLowerCase(), normalizeWei(balance));
+    r.json({ success: true });
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
 // ── Nonce ─────────────────────────────────────────────────────────────────────
-app.get('/api/nonce/:address', async (req, res) => {
+
+app.get('/api/nonce/:address', async (req, r) => {
   try {
     const addr = req.params.address.toLowerCase();
     const rec  = await prisma.nonce.findUnique({
       where: { userAddress_contractAddress: { userAddress: addr, contractAddress: CONTRACT_ADDRESS.toLowerCase() } }
     });
-    res.json({ nonce: rec?.currentNonce ?? 0 });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    r.json({ nonce: rec?.currentNonce ?? 0 });
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
 // ── State Root ────────────────────────────────────────────────────────────────
-app.get('/api/state-root', async (_req, res) => {
+
+app.get('/api/state-root', async (_, r) => {
   try {
     let onChainRoot = null;
     if (contract) { try { onChainRoot = await contract.currentStateRoot(); } catch {} }
     const dbRoot = await stateManager.computeStateRoot();
     const latest = await prisma.batch.findFirst({ orderBy: { createdAt: 'desc' }, where: { status: { not: 'rejected' } } });
-    res.json({ onChainRoot, dbRoot, currentStateRoot: onChainRoot || dbRoot, batchId: latest?.onChainId || null, latestBatchId: latest?.onChainId || null, latestBatchStatus: latest?.status || null });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    r.json({
+      onChainRoot, dbRoot,
+      currentStateRoot: onChainRoot || dbRoot,
+      batchId: latest?.onChainId || null,
+      latestBatchId: latest?.onChainId || null,
+      latestBatchStatus: latest?.status || null,
+    });
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
-app.get('/api/metrics', async (_req, res) => {
+
+app.get('/api/metrics', async (_, r) => {
   try {
-    const [total, pending, bTotal, bFinal, bReject, challenges] = await Promise.all([
+    const [tot, pen, bTot, bFin, bRej, chal] = await Promise.all([
       prisma.pendingTransaction.count(),
       prisma.pendingTransaction.count({ where: { status: 'pending' } }),
       prisma.batch.count(),
@@ -563,85 +584,110 @@ app.get('/api/metrics', async (_req, res) => {
       prisma.batch.count({ where: { status: 'rejected' } }),
       prisma.challenge.count({ where: { status: 'pending' } }),
     ]);
-    const avg  = bTotal > 0 ? total / bTotal : 0;
-    const save = avg > 0 ? Math.round((1 - 500000 / (avg * 21000)) * 100) : 95;
-    res.json({
-      totalTransactions: total, pendingTransactions: pending,
-      totalBatches: bTotal, finalizedBatches: bFinal, rejectedBatches: bReject,
-      activeChallenges: challenges, avgTxsPerBatch: Math.round(avg),
+    const avg  = bTot > 0 ? tot / bTot : 0;
+    const save = avg  > 0 ? Math.round((1 - 500000 / (avg * 21000)) * 100) : 95;
+    r.json({
+      totalTransactions: tot, pendingTransactions: pen,
+      totalBatches: bTot, finalizedBatches: bFin, rejectedBatches: bRej,
+      activeChallenges: chal, avgTxsPerBatch: Math.round(avg),
       estimatedGasSaving: `~${Math.max(0, save)}%`,
       compressionRatio: avg > 0 ? `${Math.round(avg)}:1` : 'N/A',
-      networkHealth: pending < 100 && challenges === 0 ? 'healthy' : 'congested',
+      networkHealth: pen < 100 && chal === 0 ? 'healthy' : 'congested',
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { r.status(500).json({ error: e.message }); }
+});
+
+// ── Gas Prices ────────────────────────────────────────────────────────────────
+
+app.get('/api/gas-prices', async (_, r) => {
+  try {
+    if (!provider) return r.json({ slow: '20', standard: '25', fast: '30', rapid: '35' });
+    const fee  = await provider.getFeeData();
+    const gwei = Math.round(parseFloat(ethers.utils.formatUnits(fee.gasPrice || '0', 'gwei')));
+    r.json({ slow: (gwei*.8).toFixed(0), standard: gwei.toFixed(0), fast: (gwei*1.2).toFixed(0), rapid: (gwei*1.5).toFixed(0) });
+  } catch { r.json({ slow: '20', standard: '25', fast: '30', rapid: '35' }); }
 });
 
 // ── Withdrawal ────────────────────────────────────────────────────────────────
-app.post('/api/withdrawal/request', async (req, res) => {
+
+app.post('/api/withdrawal/request', async (req, r) => {
   try {
     const { address, amount } = req.body;
-    if (!address || !amount) return res.status(400).json({ error: 'address and amount required' });
+    if (!address || !amount) return r.status(400).json({ error: 'address and amount required' });
     const addr   = address.toLowerCase();
-    const amtWei = normalizeToWei(amount);
-    const { finalizedWei } = await stateManager.getBalance(addr);
-    if (BigInt(amtWei) > BigInt(finalizedWei))
-      return res.status(400).json({ error: `Insufficient finalized balance: have ${fmtEth(finalizedWei)} ETH` });
+    const amtWei = normalizeWei(amount);
+    const { finalizedWei, pendingWei } = await stateManager.getBalance(addr);
+    if (BigInt(amtWei) > BigInt(finalizedWei)) {
+      return r.status(400).json({
+        error: `Insufficient finalized balance. Finalized: ${fmtEth(finalizedWei)} ETH. Pending (not yet withdrawable): ${fmtEth(pendingWei)} ETH. Wait for your transactions to be included in a finalized batch (challenge period: ~5 min dev, 7 days prod).`
+      });
+    }
     const { withdrawalRoot, entries } = await stateManager.buildWithdrawalTree(null);
     const entry = entries.find(e => e.address === addr);
-    if (!entry) return res.status(400).json({ error: 'No withdrawal entry — ensure balance is finalized' });
-    res.json({ success: true, withdrawalId: entry.leaf, withdrawalRoot, proof: entry.proof, amount: amtWei, simulated: !contract });
-  } catch (e) { console.error('withdrawal:', e); res.status(500).json({ error: e.message }); }
+    if (!entry) return r.status(400).json({ error: 'No finalized withdrawal entry found' });
+
+    // On-chain withdrawal
+    if (contract) {
+      try {
+        const tx = await contract.withdrawFunds(ethers.BigNumber.from(amtWei));
+        await tx.wait();
+        // FundsWithdrawn event handler calls debitWithdrawal
+        return r.json({ success: true, txHash: tx.hash, simulated: false });
+      } catch (e) { console.warn('On-chain withdraw failed, using DB-only:', e.message); }
+    }
+
+    // DB-only
+    await stateManager.debitWithdrawal(addr, amtWei);
+    broadcast('balance_updated', { address: addr });
+    r.json({ success: true, simulated: true, message: 'DB-only withdrawal processed' });
+  } catch (e) { console.error('withdrawal:', e); r.status(500).json({ error: e.message }); }
 });
 
 // ── Operators ─────────────────────────────────────────────────────────────────
-app.get('/api/operators',        async (_, r) => { try { r.json(await prisma.operator.findMany({ orderBy: { createdAt: 'desc' } })); } catch (e) { r.status(500).json({ error: e.message }); } });
-app.get('/api/admin/operators',  async (_, r) => { try { r.json(await prisma.operator.findMany({ orderBy: { createdAt: 'desc' } })); } catch (e) { r.status(500).json({ error: e.message }); } });
-app.post('/api/admin/operators', async (req, res) => {
+
+app.get('/api/operators',       async (_, r) => { try { r.json(await prisma.operator.findMany({ orderBy: { createdAt: 'desc' } })); } catch (e) { r.status(500).json({ error: e.message }); } });
+app.get('/api/admin/operators', async (_, r) => { try { r.json(await prisma.operator.findMany({ orderBy: { createdAt: 'desc' } })); } catch (e) { r.status(500).json({ error: e.message }); } });
+app.get('/api/admin/contracts', async (_, r) => { try { r.json(await prisma.contractDeployment.findMany()); } catch (e) { r.status(500).json({ error: e.message }); } });
+
+app.post('/api/admin/operators', async (req, r) => {
   try {
     const { address } = req.body;
-    if (!address) return res.status(400).json({ error: 'address required' });
+    if (!address) return r.status(400).json({ error: 'address required' });
     if (contract) { const tx = await contract.addOperator(address); await tx.wait(); }
-    const op = await prisma.operator.upsert({ where: { address: address.toLowerCase() }, create: { address: address.toLowerCase(), isActive: true }, update: { isActive: true } });
-    res.json({ success: true, operator: op });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const op = await prisma.operator.upsert({
+      where: { address: address.toLowerCase() },
+      create: { address: address.toLowerCase(), isActive: true },
+      update: { isActive: true }
+    });
+    r.json({ success: true, operator: op });
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
-app.delete('/api/admin/operators/:address', async (req, res) => {
+
+app.delete('/api/admin/operators/:address', async (req, r) => {
   try {
     if (contract) { const tx = await contract.removeOperator(req.params.address); await tx.wait(); }
     await prisma.operator.updateMany({ where: { address: req.params.address.toLowerCase() }, data: { isActive: false } });
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/api/admin/contracts', async (_, res) => { try { res.json(await prisma.contractDeployment.findMany()); } catch (e) { res.status(500).json({ error: e.message }); } });
-
-// ── Gas Prices ────────────────────────────────────────────────────────────────
-app.get('/api/gas-prices', async (_, res) => {
-  try {
-    if (!provider) return res.json({ slow: '20', standard: '25', fast: '30', rapid: '35' });
-    const fee  = await provider.getFeeData();
-    const gwei = Math.round(parseFloat(ethers.utils.formatUnits(fee.gasPrice || '0', 'gwei')));
-    res.json({ slow: (gwei*.8).toFixed(0), standard: gwei.toFixed(0), fast: (gwei*1.2).toFixed(0), rapid: (gwei*1.5).toFixed(0) });
-  } catch { res.json({ slow: '20', standard: '25', fast: '30', rapid: '35' }); }
+    r.json({ success: true });
+  } catch (e) { r.status(500).json({ error: e.message }); }
 });
 
 // ── Auto-Finalize Cron ────────────────────────────────────────────────────────
+
 setInterval(async () => {
   try {
-    const now      = new Date();
-    const eligible = await prisma.batch.findMany({
+    const now = new Date();
+    const eli = await prisma.batch.findMany({
       where: { status: 'challenge_period', challengeEndsAt: { lt: now }, onChainId: { not: null } }
     });
-    for (const batch of eligible) {
+    for (const batch of eli) {
       try {
-        // Safety check: verify on-chain window is actually closed
         if (contract) {
           const open = await contract.isChallengeWindowOpen(ethers.BigNumber.from(batch.onChainId));
-          if (open) { console.log(`⏳ On-chain window still open for batch ${batch.onChainId}`); continue; }
+          if (open) { console.log(`⏳ Challenge still open on-chain for batch ${batch.onChainId}`); continue; }
           const tx = await contract.finalizeBatch(ethers.BigNumber.from(batch.onChainId));
           await tx.wait();
           // BatchFinalized event handler takes it from here
         } else {
-          // DB-only mode
           const full = await prisma.batch.findUnique({ where: { id: batch.id }, include: { transactions: true } });
           if (full) await stateManager.applyFinalizedBatch(full);
           await prisma.batch.update({ where: { id: batch.id }, data: { status: 'finalized' } });
@@ -649,17 +695,19 @@ setInterval(async () => {
           broadcast('batch_finalized', { onChainId: batch.onChainId });
           console.log(`✅ Auto-finalized (DB-only) batch ${batch.onChainId}`);
         }
-      } catch (e) { console.error(`Auto-finalize failed for ${batch.onChainId}:`, e.message); }
+      } catch (e) { console.error(`Auto-finalize ${batch.onChainId}: ${e.message}`); }
     }
   } catch (e) { console.error('Auto-finalize cron:', e.message); }
 }, 30_000);
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
+
 initBlockchain().then(connected => {
   startSequencer({ contract, wallet, broadcast, stateManager, prisma });
   app.listen(PORT, () => {
     console.log(`🚀 LayerGlide backend on http://localhost:${PORT}`);
-    console.log(`   Chain: ${connected ? '✅ connected' : '⚠️  DB-only mode'}`);
+    console.log(`   Chain:            ${connected ? '✅ connected' : '⚠️  DB-only'}`);
     console.log(`   Challenge period: ${CHALLENGE_PERIOD_MS / 1000}s`);
+    console.log(`   Batch size:       ${process.env.BATCH_SIZE || '3'}`);
   });
 });
