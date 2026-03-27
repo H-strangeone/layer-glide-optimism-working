@@ -195,7 +195,77 @@ export class StateManager {
     }
     console.log(`✅ Reversion complete for batch ${batch.id.slice(0, 8)}`);
   }
-
+  async revertBatchCascade(fraudulentBatch) {
+  const prisma = this.prisma;
+ 
+  // Find ALL non-finalized batches that were created at or after the fraudulent batch.
+  // These are the batches that may have used ghost funds from the fraud.
+  const cascadeBatches = await prisma.batch.findMany({
+    where: {
+      status:    { in: ['challenge_period', 'pending_submission'] },
+      createdAt: { gte: fraudulentBatch.createdAt },
+      id:        { not: fraudulentBatch.id }, // the fraud batch itself is handled below
+    },
+    orderBy:  { createdAt: 'desc' }, // newest first — unwind in reverse order
+    include:  { transactions: true },
+  });
+ 
+  console.log(
+    `🔄 Cascade revert: ${cascadeBatches.length} subsequent batch(es) to unwind ` +
+    `after fraudulent batch ${fraudulentBatch.id.slice(0, 8)}`
+  );
+ 
+  // Revert subsequent batches newest → oldest
+  for (const batch of cascadeBatches) {
+    await this.revertBatch(batch);
+ 
+    await prisma.batch.update({
+      where: { id: batch.id },
+      data:  { status: 'rejected' },
+    });
+    await prisma.pendingTransaction.updateMany({
+      where: { batchId: batch.id },
+      data:  { status: 'rejected' },
+    });
+ 
+    console.log(
+      `  ↩️  Reverted downstream batch ${batch.id.slice(0, 8)} ` +
+      `(${batch.transactions.length} txs)`
+    );
+  }
+ 
+  // Now revert the fraudulent batch itself
+  // Re-fetch with transactions if not already included
+  const fullFraudBatch = fraudulentBatch.transactions
+    ? fraudulentBatch
+    : await prisma.batch.findUnique({
+        where:   { id: fraudulentBatch.id },
+        include: { transactions: true },
+      });
+ 
+  await this.revertBatch(fullFraudBatch);
+ 
+  await prisma.batch.update({
+    where: { id: fraudulentBatch.id },
+    data:  { status: 'rejected' },
+  });
+  await prisma.pendingTransaction.updateMany({
+    where: { batchId: fraudulentBatch.id },
+    data:  { status: 'rejected' },
+  });
+ 
+  console.log(
+    `✅ Cascade revert complete: fraudulent batch ${fraudulentBatch.id.slice(0, 8)} + ` +
+    `${cascadeBatches.length} downstream batch(es) rejected`
+  );
+ 
+  return {
+    fraudBatchId:         fraudulentBatch.id,
+    cascadeCount:         cascadeBatches.length,
+    totalBatchesReverted: cascadeBatches.length + 1,
+  };
+}
+ 
   // ─── Withdrawal ───────────────────────────────────────────────────────────
 
   async debitWithdrawal(address, amountWei) {

@@ -15,6 +15,7 @@
     "dotenv": "^16.4.7",
     "ethers": "^5.8.0",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.3.1",
     "tanstack": "^1.0.3",
     "uuid": "^11.1.0"
   },

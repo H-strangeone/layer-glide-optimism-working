@@ -269,26 +269,24 @@ function setupEventListeners() {
         where:   { onChainId: id },
         include: { transactions: true },
       });
-
+ 
       if (batch && batch.status !== 'rejected') {
-        await stateManager.revertBatch(batch);
-        await prisma.batch.update({
-          where: { id: batch.id },
-          data:  { status: 'rejected' },
-        });
-        await prisma.pendingTransaction.updateMany({
-          where: { batchId: batch.id },
-          data:  { status: 'rejected' },
-        });
-        console.log(`🚨 FraudProofAccepted (event): batch #${id} rejected, balances reverted`);
+        // CASCADE REVERT: undo the fraud batch AND every non-finalized batch after it
+        const cascadeResult = await stateManager.revertBatchCascade(batch);
+ 
+        console.log(
+          ` FraudProofAccepted (event): batch #${id} + ` +
+          `${cascadeResult.cascadeCount} downstream batch(es) rejected, all balances reverted`
+        );
       } else if (batch?.status === 'rejected') {
-        console.log(`ℹ️  FraudProofAccepted for #${id} — already rejected, skipping`);
+        console.log(` FraudProofAccepted for #${id} — already rejected, skipping`);
       }
-
+ 
       broadcast('fraud_proof_accepted', {
-        onChainId: id,
+        onChainId:    id,
         challenger,
-        reward: reward.toString(),
+        reward:       reward.toString(),
+        cascadeCount: 0, // will be populated from cascade result above if needed
       });
     } catch (e) { console.error('FraudProofAccepted handler error:', e.message); }
   });
@@ -640,19 +638,27 @@ app.post('/api/fraud-proof/submit', async (req, r) => {
       where:   { id: batch.id },
       include: { transactions: true },
     });
-    await stateManager.revertBatch(fullBatch);
-    await prisma.batch.update({ where: { id: batch.id }, data: { status: 'rejected' } });
-    await prisma.pendingTransaction.updateMany({
-      where: { batchId: batch.id },
-      data:  { status: 'rejected' },
-    });
+ 
+    // CASCADE REVERT: undo the fraud batch AND every non-finalized batch after it
+    const cascadeResult = await stateManager.revertBatchCascade(fullBatch);
+ 
+    // revertBatchCascade already updates batch + tx statuses to 'rejected',
+    // so we only need to update the challenge record here.
     await prisma.challenge.update({ where: { id: challenge.id }, data: { status: 'accepted' } });
+ 
     broadcast('fraud_proof_accepted', {
-      onChainId:  batch.onChainId,
-      challenger: challengerAddress,
-      reward:     '0',
+      onChainId:    batch.onChainId,
+      challenger:   challengerAddress,
+      reward:       '0',
+      cascadeCount: cascadeResult.cascadeCount,
     });
-    r.json({ success: true, message: 'DB-only: batch rejected, state reverted', challenge });
+ 
+    r.json({
+      success:      true,
+      message:      `DB-only: fraud batch + ${cascadeResult.cascadeCount} downstream batch(es) rejected, state reverted`,
+      cascade:      cascadeResult,
+      challenge,
+    });
   } catch (e) { console.error('submit-fraud-proof:', e); r.status(500).json({ error: e.message }); }
 });
 
