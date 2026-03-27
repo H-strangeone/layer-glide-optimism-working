@@ -1,3 +1,9 @@
+/**
+ * src/App.tsx — with global scroll fade initialized
+ * 
+ * Only change from existing: imports and calls initGlobalScrollFade() in AppContent
+ */
+
 import React, { useEffect, useRef } from 'react';
 import { useRealtimeUpdates } from './hooks/useRealtimeUpdates';
 import { WagmiConfig } from 'wagmi';
@@ -18,6 +24,7 @@ import NotFound from './pages/NotFound';
 import { config } from './lib/wagmi';
 import gsap from 'gsap';
 import { useWallet } from './hooks/useWallet';
+import { initGlobalScrollFade } from './lib/globalScrollFade';  // ← NEW
 
 const queryClient = new QueryClient();
 
@@ -64,6 +71,8 @@ function PageTransition({ children }: { children: React.ReactNode }) {
       { scaleX: 1, transformOrigin: 'right center' },
       { scaleX: 0, duration: 0.20, ease: 'power3.inOut' }
     );
+    // After page transition, re-scan for scroll-fade elements
+    setTimeout(() => initGlobalScrollFade(), 100);
   }, [location.pathname]);
 
   return (
@@ -77,6 +86,11 @@ function PageTransition({ children }: { children: React.ReactNode }) {
 function AppContent() {
   useRealtimeUpdates();
   const { isConnected } = useWallet();
+
+  // Initialize global scroll fade once on mount
+  useEffect(() => {
+    initGlobalScrollFade();
+  }, []);
 
   useEffect(() => {
     const ensureNetwork = async () => {
@@ -102,7 +116,7 @@ function AppContent() {
         <PageTransition>
           <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 24px' }}>
             <Routes>
-              <Route path="/"            element={<Index />} />
+              <Route path="/"             element={<Index />} />
               <Route path="/transactions" element={<Transactions />} />
               <Route path="/batches"      element={<Batches />} />
               <Route path="/withdraw"     element={<Withdraw />} />
